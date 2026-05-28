@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Trình dịch YouTube AI</title>
+  <style>
+    :root {
+      --bg-grad: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
+      --card: rgba(255, 255, 255, 0.08);
+      --card-border: rgba(255, 255, 255, 0.14);
+      --text: rgba(255, 255, 255, 0.96);
+      --muted: rgba(255, 255, 255, 0.8);
+      --field-bg: rgba(255, 255, 255, 0.96);
+      --shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
+      --shadow-soft: 0 10px 30px rgba(0, 0, 0, 0.22);
+      --green: #4CAF50;
+      --green-hover: #45a049;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box; 
+    }
+    body {
+      width: 350px;
+      padding: 18px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg-grad);
+      color: var(--text);
+      letter-spacing: 0.1px;
+    }
+    h1 {
+      font-size: 18px;
+      margin-bottom: 14px;
+      text-align: center;
+      font-weight: 700;
+    }
+    .section {
+      background: var(--card);
+      padding: 14px;
+      border-radius: 14px;
+      margin-bottom: 12px;
+      border: 1px solid var(--card-border);
+      box-shadow: var(--shadow-soft);
+      backdrop-filter: blur(12px);
+    }
+    .section h2 {
+      font-size: 14px;
+      margin-bottom: 10px;
+      opacity: 0.95;
+      font-weight: 700;
+    }
+
+    input, select {
+      width: 100%;
+      padding: 11px 12px;
+      border: 1px solid rgba(0, 0, 0, 0.08);
+      border-radius: 10px;
+      margin-bottom: 10px;
+      font-size: 14px;
+      background: var(--field-bg);
+      color: rgba(0, 0, 0, 0.85);
+      outline: none;
+      transition: box-shadow 0.2s ease, transform 0.2s ease;
+    }
+    input::placeholder {
+      color: rgba(0, 0, 0, 0.45);
+    }
+    input:focus, select:focus {
+      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35);
+      transform: translateY(-1px);
+    }
+    select {
+      appearance: none;
+      background-image:
+        linear-gradient(45deg, transparent 50%, rgba(0, 0, 0, 0.55) 50%),
+        linear-gradient(135deg, rgba(0, 0, 0, 0.55) 50%, transparent 50%),
+        linear-gradient(to right, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.08));
+      background-position:
+        calc(100% - 18px) calc(50% - 3px),
+        calc(100% - 13px) calc(50% - 3px),
+        calc(100% - 40px) 50%;
+      background-size: 6px 6px, 6px 6px, 1px 18px;
+      background-repeat: no-repeat;
+      padding-right: 48px;
+    }
+
+    button {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease;
+    }
+    .primary-btn {
+      background: var(--green);
+      color: white;
+      box-shadow: 0 10px 22px rgba(0, 0, 0, 0.22);
+    }
+    .primary-btn:hover {
+      background: var(--green-hover);
+      transform: translateY(-2px);
+      filter: brightness(1.02);
+    }
+    .primary-btn:active {
+      transform: translateY(0px);
+      filter: brightness(0.98);
+    }
+    .primary-btn:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .status {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 13px;
+      text-align: center;
+      display: none;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+    }
+    .status.success {
+      background: rgba(76, 175, 80, 0.3);
+      display: block;
+    }
+    .status.error {
+      background: rgba(244, 67, 54, 0.3);
+      display: block;
+    }
+    .status.info {
+      background: rgba(33, 150, 243, 0.3);
+      display: block;
+    }
+    .link {
+      color: #fff;
+      text-decoration: underline;
+      cursor: pointer;
+      font-size: 12px;
+      display: inline-block;
+      margin-top: 5px;
+      opacity: 0.95;
+    }
+    .link:hover {
+      opacity: 1;
+    }
+    .note {
+      font-size: 12px;
+      line-height: 1.35;
+      opacity: 0.9;
+      margin: 6px 0 10px;
+    }
+    .slider-row {
+      margin-bottom: 12px;
+    }
+    .slider-label {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 13px;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+    .slider-value {
+      font-variant-numeric: tabular-nums;
+      opacity: 0.9;
+    }
+    input[type="range"] {
+      width: 100%;
+      height: 6px;
+      padding: 0;
+      margin: 0;
+      border: none;
+      border-radius: 999px;
+      appearance: none;
+      background: linear-gradient(90deg, #38bdf8 0%, #22c55e 100%);
+      outline: none;
+      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      border: 3px solid #22c55e;
+      cursor: pointer;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      border: 3px solid #22c55e;
+      cursor: pointer;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+    }
+  </style>
+</head>
+<body>
+  <h1>Trình dịch YouTube AI</h1>
+  
+  <div class="section">
+    <h2>Gemini API key (không bắt buộc)</h2>
+    <input type="password" id="apiKey" placeholder="Có thể để trống để dùng dịch miễn phí">
+    <div class="note">
+      Để trống: vẫn dùng được (dịch miễn phí), nhưng có thể chậm/không ổn định bằng khi video dài.<br>
+      Nhập Gemini API key: thường dịch nhanh và chất lượng tốt hơn, nhưng có thể phát sinh phí trên tài khoản Google của bạn.<br>
+      Key được lưu trong Chrome sync storage (có thể đồng bộ qua thiết bị nếu bạn bật Chrome Sync). Bạn có thể xoá bất cứ lúc nào.
+    </div>
+    <button class="primary-btn" id="saveKey">Lưu / Xoá key</button>
+    <a class="link" href="https://aistudio.google.com/app/apikey" target="_blank">Lấy API key (trả phí)</a>
+  </div>
+
+  <div class="section">
+    <h2>Cài đặt dịch</h2>
+    <select id="targetLang">
+      <option value="ar">Arabic (العربية)</option>
+      <option value="zh">Chinese (中文)</option>
+      <option value="en">English</option>
+      <option value="fr">French (Français)</option>
+      <option value="de">German (Deutsch)</option>
+      <option value="hi">Hindi (हिन्दी)</option>
+      <option value="it">Italian (Italiano)</option>
+      <option value="ja">Japanese (日本語)</option>
+      <option value="ko">Korean (한국어)</option>
+      <option value="pt">Portuguese (Português)</option>
+      <option value="ru">Russian (Русский)</option>
+      <option value="es">Spanish (Español)</option>
+      <option value="tr">Turkish (Türkçe)</option>
+      <option value="vi">Vietnamese (Tiếng Việt)</option>
+      <option value="th">Thai (ไทย)</option>
+    </select>
+    <button class="primary-btn" id="startTranslation">Dịch & Thuyết minh video</button>
+  </div>
+
+  <div class="section">
+    <h2>🔊 Âm thanh</h2>
+    <div class="slider-row">
+      <div class="slider-label">
+        <span>Âm lượng gốc</span>
+        <span class="slider-value" id="originalVolumeValue">100%</span>
+      </div>
+      <input type="range" id="originalVolume" min="0" max="100" step="1" value="100">
+    </div>
+    <div class="slider-row" style="margin-bottom: 0;">
+      <div class="slider-label">
+        <span>Âm lượng lồng tiếng</span>
+        <span class="slider-value" id="dubbingVolumeValue">100%</span>
+      </div>
+      <input type="range" id="dubbingVolume" min="0" max="100" step="1" value="100">
+    </div>
+  </div>
+
+  <div class="status" id="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
