@@ -90,14 +90,14 @@ let liveCaptionLastChangeAt = 0;
 let liveCaptionLastTopLine = '';
 let liveCaptionLastLineText = '';
 // [FIX] Giảm stable time: không cần đợi 700ms mới đọc, 250ms là đủ
-const LIVE_CAPTION_STABLE_MS = 250;
+const LIVE_CAPTION_STABLE_MS = 100;
 const LIVE_CAPTION_WARMUP_MS = 5000;
 let liveCaptionWarmupUntil = 0;
 let ttsLastStartAt = 0;
 let ttsWatchdogInterval = null;
 const TTS_WATCHDOG_MS = 1200;
 const TTS_STUCK_MS = 10000;
-const TTS_RATE = 2.5;
+const TTS_RATE = 3;
 const TTS_PITCH = 1.0;
 let TTS_VOLUME = 1.0;
 let VIDEO_VOLUME = 1.0;
