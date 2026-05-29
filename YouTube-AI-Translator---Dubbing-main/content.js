@@ -149,7 +149,7 @@ function createOverlay() {
         <div class="yt-trans-progress-fill"></div>
       </div>
       <div class="yt-trans-controls">
-        <button class="yt-trans-btn" id="toggleDubbing"> 🔊 Bật lồng tiếng</button>
+        <button class="yt-trans-btn" id="toggleDubbing"> Bật lồng tiếng</button>
       </div>
       <div class="yt-trans-volume-controls" style="margin-top: 15px; display: flex; flex-direction: column; gap: 8px;">
         <label style="display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: #fff;">
@@ -1923,6 +1923,15 @@ async function startTranslation(apiKey, targetLang) {
   const overlay = createOverlay();
   overlay.style.display = 'block';
 
+  // Khóa nút Lồng tiếng khi đang lấy dữ liệu
+  const toggleBtn = document.getElementById('toggleDubbing');
+  if (toggleBtn) {
+    toggleBtn.disabled = true;
+    toggleBtn.style.opacity = '0.5';
+    toggleBtn.style.cursor = 'not-allowed';
+    toggleBtn.title = 'Đang lấy dữ liệu, vui lòng đợi...';
+  }
+
   try {
     updateStatus('Đang lấy phụ đề...', 10);
     stopLiveCaptionMode();
@@ -1952,9 +1961,9 @@ async function startTranslation(apiKey, targetLang) {
       }
     } catch (error) {
       if (error?.name === 'AutomatedQueriesBlocked') {
-        updateStatus('Bị YouTube chặn (automated queries). Hãy bật Play + bật CC 1 lần rồi thử lại.', 0);
+        updateStatus('Có vấn đề, Video này không có phụ đề, hãy bật Play + bật CC 1 lần rồi thử lại.', 0);
       } else {
-        updateStatus('Chưa có timedtext. Hãy bật Play + bật CC 1 lần...', 15);
+        updateStatus('Video này không có phụ đề, hãy bật Play + bật CC 1 lần...', 115, 'Cho đến phụ đề hiển thị trên video!');
       }
       try {
         segments = await fetchTranscriptionFromTextTracks(targetLang);
@@ -1965,7 +1974,7 @@ async function startTranslation(apiKey, targetLang) {
     }
 
     if (!segments || segments.length === 0) {
-      throw new Error('Video này không có phụ đề để dịch');
+      throw new Error('Video này không có phụ đề để dịch, hãy bật Play + bật CC 1 lần rồi thử lại.');
     }
 
     updateStatus(`Đang dịch ${segments.length} câu...`, 30);
@@ -1982,6 +1991,14 @@ async function startTranslation(apiKey, targetLang) {
       originalText: seg.text,
       translatedText: ''
     }));
+
+    // Mở khóa nút Lồng tiếng khi đã có dữ liệu
+    if (toggleBtn) {
+      toggleBtn.disabled = false;
+      toggleBtn.style.opacity = '1';
+      toggleBtn.style.cursor = 'pointer';
+      toggleBtn.title = '';
+    }
 
     syncSubtitles();
     const video = document.querySelector('video');
@@ -2246,6 +2263,47 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     });
     return false;
   }
+});
+
+// [FIX] Phát hiện khi người dùng bấm sang video khác (SPA navigation của YouTube)
+document.addEventListener('yt-navigate-finish', () => {
+  console.log('[YT-Trans] Chuyển video mới, tự động tải lại tiện ích...');
+
+  // Dừng giọng đọc cũ
+  if ('speechSynthesis' in window) {
+    speechSynthesis.cancel();
+  }
+  isLiveCaptionSpeaking = false;
+  clearTtsScheduleTimers();
+  ttsClearQueue();
+  stopTtsWatchdog();
+
+  // Xóa dữ liệu cũ
+  translatedSegments = [];
+  rawSegments = [];
+  isTranslating = false;
+
+  // Ẩn phụ đề cũ
+  const overlay = document.getElementById('yt-translator-overlay');
+  if (overlay) {
+    overlay.style.display = 'none';
+  }
+
+  // Cập nhật UI
+  updateStatus('Đã phát hiện video mới. Đang chuẩn bị...', null);
+  const toggleBtn = document.getElementById('toggleDubbing');
+  if (toggleBtn) toggleBtn.style.display = 'none';
+
+  // Thử tự động dịch lại cho video mới nếu đã có API Key
+  setTimeout(() => {
+    chrome.storage.sync.get(['geminiApiKey', 'targetLang'], (data) => {
+      if (data.geminiApiKey && data.targetLang) {
+        startTranslation(data.geminiApiKey, data.targetLang);
+      } else {
+        updateStatus('Sẵn sàng dịch. Vui lòng bấm Dịch ở Popup.', null);
+      }
+    });
+  }, 1000); // Đợi 1 giây để YouTube load xong player mới
 });
 
 // Initialize when page loads (YouTube is SPA; content script may load before watch?v=)
