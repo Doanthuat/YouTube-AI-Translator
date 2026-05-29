@@ -95,12 +95,13 @@ const LIVE_CAPTION_WARMUP_MS = 5000;
 let liveCaptionWarmupUntil = 0;
 let ttsLastStartAt = 0;
 let ttsWatchdogInterval = null;
+let ttsCurrentSegEnd = null;
 const TTS_WATCHDOG_MS = 1200;
 const TTS_STUCK_MS = 10000;
-const TTS_RATE_DEFAULT = 1.5;
-const TTS_RATE_MIN = 1.0;
-const TTS_RATE_MAX = 2.8;
-const TTS_MS_PER_CHAR = 62;
+const TTS_RATE_DEFAULT = 1.2;
+const TTS_RATE_MIN = 1; // Cho phép đọc rất chậm nếu người nói chậm
+const TTS_RATE_MAX = 5;  // Tăng giới hạn tối đa để bắt kịp người nói nhanh
+const TTS_MS_PER_CHAR = 65; // Ước tính thời gian đọc 1 ký tự ở tốc độ 1.0 (khoảng 65ms)
 const TTS_PITCH = 1.0;
 let TTS_VOLUME = 1.0;
 let VIDEO_VOLUME = 1.0;
@@ -1462,11 +1463,27 @@ function computeTtsRate(text, segStart, segEnd) {
   if (segStart == null || segEnd == null || segEnd <= segStart) {
     return TTS_RATE_DEFAULT;
   }
+
+  // Thời lượng chuẩn của segment
+  const segDuration = segEnd - segStart;
+
+  // Lấy thời gian video hiện tại để xem ta có bị trễ không
   const video = document.querySelector('video');
   const videoTime = video ? video.currentTime : segStart;
-  const availableTime = Math.max(0.3, segEnd - Math.max(segStart, videoTime));
+
+  // Thời gian thực tế còn lại để đọc hết câu này
+  // Nếu videoTime đã vượt qua segStart, ta có ít thời gian hơn
+  // Dùng Math.max(0.5, ...) để tránh chia cho số quá nhỏ (gây rate vô cực)
+  const availableTime = Math.max(0.5, segEnd - Math.max(segStart, videoTime));
+
+  // Ước tính thời gian cần thiết để đọc câu này ở tốc độ 1.0
   const estimatedDuration = (text || '').length * TTS_MS_PER_CHAR / 1000;
-  const rate = estimatedDuration / availableTime;
+
+  // Tính tốc độ cần thiết: Thời gian cần / Thời gian có
+  // Ví dụ: Cần 3s, nhưng chỉ có 1.5s -> Rate = 2.0 (đọc nhanh gấp đôi)
+  let rate = estimatedDuration / availableTime;
+
+  // Ép tốc độ vào khoảng giới hạn an toàn để giọng đọc không bị méo quá mức
   return Math.max(TTS_RATE_MIN, Math.min(TTS_RATE_MAX, rate));
 }
 
@@ -1514,6 +1531,12 @@ function ttsSpeakNext() {
   if (!nextItem) return;
   const nextText = nextItem.text;
 
+  // Skip stale segments whose time window has already passed
+  if (video && nextItem.segEnd != null && video.currentTime > nextItem.segEnd + 0.5) {
+    ttsSpeakNext();
+    return;
+  }
+
   const voices = speechSynthesis.getVoices ? speechSynthesis.getVoices() : [];
   if (!voices || voices.length === 0) {
     // Voices not ready yet; push back and retry shortly.
@@ -1549,6 +1572,7 @@ function ttsSpeakNext() {
       safetyTimer = null;
     }
     isLiveCaptionSpeaking = false;
+    ttsCurrentSegEnd = null;
     liveCaptionLastSpokenText = nextText;
     liveCaptionLastSpokenAt = Date.now();
     ttsSpeakNext();
@@ -1570,6 +1594,7 @@ function ttsSpeakNext() {
   utterance.onerror = finalizeSpeech;
 
   isLiveCaptionSpeaking = true;
+  ttsCurrentSegEnd = nextItem.segEnd;
   speakCalledAt = Date.now();
   speechSynthesis.speak(utterance);
 
@@ -1588,6 +1613,7 @@ function ttsClearQueue() {
   liveCaptionBuffer = '';
   liveCaptionPendingText = '';
   liveCaptionCurrentText = '';
+  ttsCurrentSegEnd = null;
 }
 
 // Unified TTS push: dedup 2 chiều + queue drain tuần tự (không drop câu)
@@ -1664,6 +1690,14 @@ function startTtsWatchdog() {
     if (speechSynthesis.speaking && Date.now() - ttsLastStartAt > TTS_STUCK_MS) {
       speechSynthesis.cancel();
       isLiveCaptionSpeaking = false;
+      ttsCurrentSegEnd = null;
+    }
+
+    // Interrupt if current segment's time window has passed (anti-cascading delay)
+    if (speechSynthesis.speaking && ttsCurrentSegEnd != null && video && video.currentTime > ttsCurrentSegEnd + 0.3) {
+      speechSynthesis.cancel();
+      isLiveCaptionSpeaking = false;
+      ttsCurrentSegEnd = null;
     }
 
     ttsSpeakNext();
