@@ -97,12 +97,21 @@ let ttsLastStartAt = 0;
 let ttsWatchdogInterval = null;
 const TTS_WATCHDOG_MS = 1200;
 const TTS_STUCK_MS = 10000;
-const TTS_RATE = 3;
+const TTS_RATE_DEFAULT = 1.5;
+const TTS_RATE_MIN = 1.0;
+const TTS_RATE_MAX = 2.8;
+const TTS_MS_PER_CHAR = 62;
 const TTS_PITCH = 1.0;
 let TTS_VOLUME = 1.0;
 let VIDEO_VOLUME = 1.0;
 // YouTube timedtext already includes start/end times. Keep lead at 0 to avoid speaking ahead of video time.
 const SUBTITLE_LEAD_S = 0;
+// Adaptive TTS lead: measures actual speechSynthesis startup latency and adjusts automatically
+const TTS_LEAD_INITIAL = 0.8;
+const TTS_LEAD_MIN = 0.3;
+const TTS_LEAD_MAX = 1.5;
+let ttsLatencySamples = [];
+const TTS_LATENCY_SAMPLE_MAX = 10;
 
 // [FIX] Quản lý setTimeout-based TTS scheduler cho normal mode
 let ttsScheduleTimers = [];
@@ -1449,6 +1458,26 @@ function normalizeTtsText(text) {
   return (text || '').replace(/\s+/g, ' ').trim();
 }
 
+function computeTtsRate(text, segStart, segEnd) {
+  if (segStart == null || segEnd == null || segEnd <= segStart) {
+    return TTS_RATE_DEFAULT;
+  }
+  const video = document.querySelector('video');
+  const videoTime = video ? video.currentTime : segStart;
+  const availableTime = Math.max(0.3, segEnd - Math.max(segStart, videoTime));
+  const estimatedDuration = (text || '').length * TTS_MS_PER_CHAR / 1000;
+  const rate = estimatedDuration / availableTime;
+  return Math.max(TTS_RATE_MIN, Math.min(TTS_RATE_MAX, rate));
+}
+
+function getAdaptiveTtsLead() {
+  if (ttsLatencySamples.length === 0) return TTS_LEAD_INITIAL;
+  const avg = ttsLatencySamples.reduce((a, b) => a + b, 0) / ttsLatencySamples.length;
+  // Add 20% buffer on top of measured average latency
+  const leadS = (avg * 1.2) / 1000;
+  return Math.max(TTS_LEAD_MIN, Math.min(TTS_LEAD_MAX, leadS));
+}
+
 function shouldDropTtsText(normalizedText, now = Date.now()) {
   const t = normalizeTtsText(normalizedText);
   if (!t) return true;
@@ -1461,7 +1490,7 @@ function shouldDropTtsText(normalizedText, now = Date.now()) {
   }
 
   if (t === ttsQueueLastText) return true;
-  if (liveCaptionQueue.includes(t)) return true;
+  if (liveCaptionQueue.some(item => item.text === t)) return true;
 
   return false;
 }
@@ -1481,13 +1510,14 @@ function ttsSpeakNext() {
 
   if (isLiveCaptionSpeaking || speechSynthesis.speaking) return;
 
-  const nextText = liveCaptionQueue.shift();
-  if (!nextText) return;
+  const nextItem = liveCaptionQueue.shift();
+  if (!nextItem) return;
+  const nextText = nextItem.text;
 
   const voices = speechSynthesis.getVoices ? speechSynthesis.getVoices() : [];
   if (!voices || voices.length === 0) {
     // Voices not ready yet; push back and retry shortly.
-    liveCaptionQueue.unshift(nextText);
+    liveCaptionQueue.unshift(nextItem);
     if (liveCaptionQueue.length > LIVE_CAPTION_QUEUE_MAX) {
       liveCaptionQueue.pop();
     }
@@ -1496,7 +1526,7 @@ function ttsSpeakNext() {
   }
 
   const utterance = new SpeechSynthesisUtterance(nextText);
-  utterance.rate = TTS_RATE;
+  utterance.rate = computeTtsRate(nextText, nextItem.segStart, nextItem.segEnd);
   utterance.pitch = TTS_PITCH;
   utterance.volume = TTS_VOLUME;
   utterance.lang = currentTargetLang || 'vi';
@@ -1524,16 +1554,31 @@ function ttsSpeakNext() {
     ttsSpeakNext();
   };
 
+  let speakCalledAt = 0;
   utterance.onstart = () => {
     ttsLastStartAt = Date.now();
+    // Measure actual TTS startup latency for adaptive lead
+    if (speakCalledAt > 0) {
+      const latencyMs = Date.now() - speakCalledAt;
+      ttsLatencySamples.push(latencyMs);
+      if (ttsLatencySamples.length > TTS_LATENCY_SAMPLE_MAX) {
+        ttsLatencySamples.shift();
+      }
+    }
   };
   utterance.onend = finalizeSpeech;
   utterance.onerror = finalizeSpeech;
 
   isLiveCaptionSpeaking = true;
+  speakCalledAt = Date.now();
   speechSynthesis.speak(utterance);
 
-  const maxDurationMs = Math.min(12000, Math.max(2000, nextText.length * 60));
+  const segDurationMs = (nextItem.segEnd != null && nextItem.segStart != null && nextItem.segEnd > nextItem.segStart)
+    ? (nextItem.segEnd - nextItem.segStart) * 1000 + 1500
+    : null;
+  const maxDurationMs = segDurationMs
+    ? Math.min(segDurationMs, Math.max(2000, nextText.length * 60))
+    : Math.min(8000, Math.max(2000, nextText.length * 60));
   safetyTimer = setTimeout(finalizeSpeech, maxDurationMs);
 }
 
@@ -1546,7 +1591,7 @@ function ttsClearQueue() {
 }
 
 // Unified TTS push: dedup 2 chiều + queue drain tuần tự (không drop câu)
-function ttsPush(text, allowMerge = true) {
+function ttsPush(text, allowMerge = true, segStart = null, segEnd = null) {
   const now = Date.now();
   const normalized = normalizeTtsText(text);
   if (!normalized) return;
@@ -1580,13 +1625,18 @@ function ttsPush(text, allowMerge = true) {
 
   if (allowMerge && liveCaptionQueue.length > 0 && now - liveCaptionLastQueuedAt < LIVE_CAPTION_QUEUE_MERGE_MS) {
     const lastIndex = liveCaptionQueue.length - 1;
-    const merged = normalizeTtsText(`${liveCaptionQueue[lastIndex]} ${finalText}`);
+    const lastItem = liveCaptionQueue[lastIndex];
+    const merged = normalizeTtsText(`${lastItem.text} ${finalText}`);
     if (!shouldDropTtsText(merged, now)) {
-      liveCaptionQueue[lastIndex] = merged;
+      liveCaptionQueue[lastIndex] = {
+        text: merged,
+        segStart: lastItem.segStart ?? segStart,
+        segEnd: segEnd ?? lastItem.segEnd
+      };
       ttsQueueLastText = merged;
     }
   } else {
-    liveCaptionQueue.push(finalText);
+    liveCaptionQueue.push({ text: finalText, segStart, segEnd });
     ttsQueueLastText = finalText;
   }
 
@@ -1955,10 +2005,11 @@ function scheduleTtsFromSegments(video) {
   if (!isDubbingEnabled || !('speechSynthesis' in window)) return;
 
   const now = video.currentTime;
+  const adaptiveLead = getAdaptiveTtsLead();
 
   translatedSegments.forEach((seg) => {
-    // Fire at caption start time (seg.start)
-    const fireAtVideoTime = Math.max(0, (seg.start || 0) - SUBTITLE_LEAD_S);
+    // Fire adaptiveLead seconds before caption start to compensate for TTS startup latency
+    const fireAtVideoTime = Math.max(0, (seg.start || 0) - adaptiveLead);
     const delayMs = (fireAtVideoTime - now) * 1000;
     if (delayMs < -500) return; // bỏ qua segment đã qua quá 0.5s
 
@@ -1979,7 +2030,7 @@ function scheduleTtsFromSegments(video) {
 
         const translated = (seg.translatedText || '').trim();
         if (translated) {
-          ttsPush(translated, false);
+          ttsPush(translated, false, seg.start, seg.end);
           return;
         }
 
