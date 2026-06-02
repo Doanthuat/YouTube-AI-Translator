@@ -204,18 +204,6 @@
 </head>
 <body>
   <h1>Trình dịch YouTube AI</h1>
-  
-  <div class="section">
-    <h2>Gemini API key (không bắt buộc)</h2>
-    <input type="password" id="apiKey" placeholder="Có thể để trống để dùng dịch miễn phí">
-    <div class="note">
-      Để trống: vẫn dùng được (dịch miễn phí), nhưng có thể chậm/không ổn định bằng khi video dài.<br>
-      Nhập Gemini API key: thường dịch nhanh và chất lượng tốt hơn, nhưng có thể phát sinh phí trên tài khoản Google của bạn.<br>
-      Key được lưu trong Chrome sync storage (có thể đồng bộ qua thiết bị nếu bạn bật Chrome Sync). Bạn có thể xoá bất cứ lúc nào.
-    </div>
-    <button class="primary-btn" id="saveKey">Lưu / Xoá key</button>
-    <a class="link" href="https://aistudio.google.com/app/apikey" target="_blank">Lấy API key (trả phí)</a>
-  </div>
 
   <div class="section">
     <h2>Cài đặt dịch</h2>
@@ -237,6 +225,27 @@
       <option value="th">Thai (ไทย)</option>
     </select>
     <button class="primary-btn" id="startTranslation">Dịch & Thuyết minh video</button>
+  </div>
+
+  <div class="section">
+    <h2>🎙️ Giọng đọc (TTS)</h2>
+    <div class="note">
+      Mặc định: dùng giọng hệ thống (miễn phí). Nhập Cloud TTS API key để dùng giọng Google chất lượng cao (WaveNet, Neural2, Studio...).
+    </div>
+    <select id="ttsSource">
+      <option value="system">🖥️ Giọng hệ thống (mặc định)</option>
+      <option value="cloud">☁️ Google Cloud TTS</option>
+    </select>
+    <div id="cloudTtsSettings" style="display: none;">
+      <input type="password" id="cloudTtsApiKey" placeholder="Cloud TTS API Key">
+      <button class="primary-btn" id="saveCloudTtsKey" style="margin-bottom: 10px;">Lưu / Xoá key TTS</button>
+      <a class="link" href="https://console.cloud.google.com/apis/credentials" target="_blank" style="margin-bottom: 10px; display: block;">Lấy Cloud TTS API key</a>
+      <select id="cloudTtsVoice" style="display: none;">
+        <option value="">-- Chọn giọng đọc --</option>
+      </select>
+      <div id="cloudTtsVoiceInfo" style="font-size: 11px; opacity: 0.8; margin-bottom: 8px; display: none;"></div>
+      <button class="primary-btn" id="previewVoice" style="background: #2196F3; display: none;">🔊 Thử giọng</button>
+    </div>
   </div>
 
   <div class="section">
