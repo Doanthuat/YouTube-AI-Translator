@@ -41,6 +41,14 @@ let liveCaptionLastText = '';
 let isLiveCaptionMode = false;
 let currentTargetLang = 'vi';
 let prefetchTargetLang = 'vi';
+
+// Cloud TTS state
+let ttsSource = 'system'; // 'system' | 'cloud'
+let cloudTtsApiKey = '';
+let cloudTtsVoiceName = '';
+let cloudTtsLangCode = 'vi-VN';
+let cloudTtsAudioContext = null;
+let isCloudTtsSpeaking = false;
 let prefetchedTranscription = {
   videoId: null,
   promise: null,
@@ -98,10 +106,10 @@ let ttsWatchdogInterval = null;
 let ttsCurrentSegEnd = null;
 const TTS_WATCHDOG_MS = 1200;
 const TTS_STUCK_MS = 10000;
-const TTS_RATE_DEFAULT = 1.2;
-const TTS_RATE_MIN = 1; // Cho phép đọc rất chậm nếu người nói chậm
-const TTS_RATE_MAX = 9;  // Tăng giới hạn tối đa để bắt kịp người nói nhanh
-const TTS_MS_PER_CHAR = 65; // Ước tính thời gian đọc 1 ký tự ở tốc độ 1.0 (khoảng 65ms)
+const TTS_RATE_DEFAULT = 1.0;
+const TTS_RATE_MIN = 0.8;  // Cho phép đọc chậm nếu segment dài
+const TTS_RATE_MAX = 2.2;  // Tăng nhẹ lên 2.2 để có thể bắt kịp nếu bị trễ
+const TTS_MS_PER_CHAR = 55; // Ước tính thời gian đọc 1 ký tự ở tốc độ 1.0
 const TTS_PITCH = 1.0;
 let TTS_VOLUME = 1.0;
 let VIDEO_VOLUME = 1.0;
@@ -237,12 +245,112 @@ function parseSeconds(val) {
   return Number.isFinite(num) ? num : 0;
 }
 
-// Parse YouTube JSON3 caption format into sentence-level segments
-// Handles both word-append (aAppend) and cumulative-refresh formats
+// Parse YouTube JSON3 caption format using word-level timing
+// Tận dụng tOffsetMs từng chữ để tạo segment ngắn (~3 giây)
+// → TTS đọc đúng nhịp thời gian thực, không phải đọc nhanh vèo
 function parseYouTubeJson3(data) {
+  const normalize = s => s.replace(/\s+/g, ' ').trim();
+
+  // === Bước 1: Thu thập tất cả từ với timing tuyệt đối ===
+  const allWords = [];
+  let hasWordTiming = false;
+
+  for (const event of data.events) {
+    if (!event.segs) continue;
+    const baseMs = event.tStartMs || 0;
+    const eventDur = event.dDurationMs || 0;
+
+    for (const seg of event.segs) {
+      const rawText = seg.utf8 || '';
+
+      // \n = line break marker
+      if (rawText === '\n') {
+        if (allWords.length > 0) {
+          allWords[allWords.length - 1].lineBreak = true;
+        }
+        continue;
+      }
+
+      if (!rawText.trim()) continue;
+
+      const offsetMs = seg.tOffsetMs || 0;
+      if (seg.tOffsetMs != null && seg.tOffsetMs > 0) hasWordTiming = true;
+
+      allWords.push({
+        text: rawText,
+        startMs: baseMs + offsetMs,
+        eventEndMs: baseMs + eventDur,
+        lineBreak: false
+      });
+    }
+  }
+
+  // Nếu không có word-level timing → fallback về line-based parsing cũ
+  if (!hasWordTiming || allWords.length === 0) {
+    return parseYouTubeJson3Legacy(data);
+  }
+
+  // === Bước 2: Gom từ thành segment ~3 giây dựa trên timing thực tế ===
+  const TARGET_SEGMENT_MS = 3500;  // Mục tiêu ~3.5 giây mỗi segment
+  const MAX_SEGMENT_MS = 5000;     // Tối đa 5 giây (flush bắt buộc)
+  const PAUSE_THRESHOLD_MS = 600;  // Khoảng nghỉ > 600ms → flush
+
+  const segments = [];
+  let groupWords = [];
+  let groupStartMs = null;
+
+  const flushGroup = (endMs) => {
+    const text = normalize(groupWords.map(w => w.text).join(''));
+    if (text && groupStartMs !== null) {
+      segments.push({
+        text,
+        start: groupStartMs / 1000,
+        end: (endMs || groupStartMs + 2000) / 1000
+      });
+    }
+    groupWords = [];
+    groupStartMs = null;
+  };
+
+  for (let i = 0; i < allWords.length; i++) {
+    const word = allWords[i];
+
+    if (groupStartMs === null) {
+      groupStartMs = word.startMs;
+    }
+    groupWords.push(word);
+
+    const duration = word.startMs - groupStartMs;
+    const isLast = i === allWords.length - 1;
+    const nextStartMs = isLast ? null : allWords[i + 1].startMs;
+    const gapToNext = nextStartMs !== null ? nextStartMs - word.startMs : 0;
+
+    // Điều kiện flush:
+    // 1. Line break (caption sang dòng mới)
+    // 2. Đã đủ dài (> TARGET) VÀ có khoảng nghỉ nhỏ phía trước
+    // 3. Quá dài (> MAX) → flush bắt buộc
+    // 4. Khoảng nghỉ dài giữa các từ (> PAUSE_THRESHOLD)
+    // 5. Từ cuối cùng
+    const shouldFlush = word.lineBreak
+      || (duration >= TARGET_SEGMENT_MS && gapToNext >= 150)
+      || duration >= MAX_SEGMENT_MS
+      || gapToNext >= PAUSE_THRESHOLD_MS
+      || isLast;
+
+    if (shouldFlush) {
+      const endMs = nextStartMs || word.eventEndMs || word.startMs + 2000;
+      flushGroup(endMs);
+    }
+  }
+
+  return segments;
+}
+
+// Fallback: line-based parsing cũ cho khi không có word-level timing
+function parseYouTubeJson3Legacy(data) {
   const sentences = [];
-  let lineText = '';    // Current accumulated line display
-  let lineStart = null; // Start time of current line
+  let lineText = '';
+  let lineStart = null;
 
   const normalize = s => s.replace(/\s+/g, ' ').trim();
 
@@ -259,27 +367,21 @@ function parseYouTubeJson3(data) {
     if (!event.segs) continue;
     const text = event.segs.map(s => s.utf8).join('');
 
-    // \n → kết thúc dòng, emit segment
     if (text === '\n' || text.trim() === '') {
       flushLine(event.tStartMs);
       continue;
     }
 
     if (event.aAppend) {
-      // Append to current line
       if (lineStart === null) lineStart = event.tStartMs;
       lineText += text;
     } else {
-      // Non-aAppend: could be cumulative refresh OR new line start
       const normExisting = normalize(lineText);
       const normNew = normalize(text);
 
       if (normExisting && normNew.startsWith(normExisting)) {
-        // Cumulative update (e.g. "Hello" → "Hello world" → "Hello world how")
-        // Just update text in-place, no new segment
         lineText = text;
       } else {
-        // Genuinely new line (display cleared with different content)
         flushLine(event.tStartMs);
         lineStart = event.tStartMs;
         lineText = text;
@@ -287,7 +389,6 @@ function parseYouTubeJson3(data) {
     }
   }
 
-  // Flush last line
   if (lineText.trim() && lineStart !== null) {
     flushLine(lineStart + 2000);
   }
@@ -483,7 +584,10 @@ function parseCaptionsResponse(responseText) {
 function waitForInterceptedTranscript(videoId, timeoutMs = 8000) {
   if (!videoId) return Promise.resolve(null);
   if (interceptedTranscription.videoId === videoId && Array.isArray(interceptedTranscription.segments) && interceptedTranscription.segments.length > 0) {
-    return Promise.resolve(interceptedTranscription.segments);
+    return Promise.resolve({
+      segments: interceptedTranscription.segments,
+      url: interceptedTranscription.url
+    });
   }
 
   if (interceptWaiter.timer) {
@@ -535,7 +639,7 @@ window.addEventListener('message', (event) => {
     if (interceptWaiter.timer) clearTimeout(interceptWaiter.timer);
     const resolve = interceptWaiter.resolve;
     interceptWaiter = { videoId: null, resolve: null, timer: null };
-    resolve(segments);
+    resolve({ segments, url });
   }
 });
 
@@ -949,21 +1053,22 @@ async function fetchTranscription(videoId, targetLang) {
         };
 
         for (const track of preferred) {
+          // [FIX] Ưu tiên lấy bản dịch sẵn (tlang) của YouTube trước để đồng bộ 100% với phụ đề trên màn hình
           const trackUrls = [
-            buildTimedtextUrl(track, 'json3'),
-            buildTimedtextUrl(track, 'srv3'),
-            buildTimedtextUrl(track, 'srv1'),
             buildTimedtextUrl(track, 'json3', targetLang),
+            buildTimedtextUrl(track, 'json3'),
             buildTimedtextUrl(track, 'srv3', targetLang),
-            buildTimedtextUrl(track, 'srv1', targetLang)
+            buildTimedtextUrl(track, 'srv3'),
+            buildTimedtextUrl(track, 'srv1', targetLang),
+            buildTimedtextUrl(track, 'srv1')
           ];
 
           for (const url of trackUrls) {
             try {
               const directResult = await tryFetchCaptions(url, false);
               if (directResult.segments.length > 0) {
-                log(`Fetched ${directResult.segments.length} caption segments via track list`);
-                return directResult.segments;
+                log(`Fetched ${directResult.segments.length} caption segments via track list (url: ${url})`);
+                return { segments: directResult.segments, url };
               }
               const snippet = (directResult.raw || '').substring(0, 100).replace(/\n/g, ' ');
               lastError = new Error(`Captions file was empty. Response snippet: ${snippet}`);
@@ -975,8 +1080,8 @@ async function fetchTranscription(videoId, targetLang) {
             try {
               const bgResult = await tryFetchCaptions(url, true);
               if (bgResult.segments.length > 0) {
-                log(`Fetched ${bgResult.segments.length} caption segments via background track list`);
-                return bgResult.segments;
+                log(`Fetched ${bgResult.segments.length} caption segments via background track list (url: ${url})`);
+                return { segments: bgResult.segments, url };
               }
               const snippet = (bgResult.raw || '').substring(0, 100).replace(/\n/g, ' ');
               lastError = new Error(`Captions file was empty. Response snippet: ${snippet}`);
@@ -1020,9 +1125,10 @@ function prefetchTimedtextForVideo(videoId) {
     try {
       // Prefer player-driven timedtext capture (Trancy-like)
       const intercepted = await waitForInterceptedTranscript(videoId, 8000);
-      if (intercepted && intercepted.length > 0) {
-        prefetchedTranscription.segments = intercepted;
-        timedtextLog('Prefetch success (intercepted)', { videoId, segments: intercepted.length });
+      if (intercepted && intercepted.segments?.length > 0) {
+        prefetchedTranscription.segments = intercepted.segments;
+        prefetchedTranscription.url = intercepted.url;
+        timedtextLog('Prefetch success (intercepted)', { videoId, segments: intercepted.segments.length });
         return intercepted;
       }
 
@@ -1173,34 +1279,19 @@ async function translateChunkFree(segments, targetLang, chunkNum = 1, totalChunk
   return translated;
 }
 
-// Translate all segments in one batch request
-async function translateAllSegments(segments, targetLang, apiKey, onChunkTranslated) {
-  const useGemini = apiKey && apiKey.length >= 20;
+// Translate all segments using free Google Translate
+async function translateAllSegments(segments, targetLang, onChunkTranslated) {
+  updateStatus('Đang dịch...', 15);
 
-  if (!useGemini) {
-    updateStatus('Đang dùng dịch miễn phí (có thể chậm hơn)...', 15);
-  }
-
-  // Use the correct model name
-  const modelName = 'gemini-1.5-flash';
-  const url = useGemini
-    ? `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`
-    : null;
-
-  // For very large videos, split into chunks to avoid token limits
-  const MAX_SEGMENTS_PER_CHUNK = useGemini ? 40 : 15; // Smaller chunks for free endpoint
+  const MAX_SEGMENTS_PER_CHUNK = 15;
 
   if (segments.length <= MAX_SEGMENTS_PER_CHUNK) {
-    // Process small videos in one chunk
-    const translated = useGemini
-      ? await translateChunk(segments, targetLang, url, 0, 1)
-      : await translateChunkFree(segments, targetLang, 0, 1);
+    const translated = await translateChunkFree(segments, targetLang, 0, 1);
     if (typeof onChunkTranslated === 'function') {
       try { onChunkTranslated(translated, 1, 1); } catch { /* ignore */ }
     }
     return translated;
   } else {
-    // Process large videos in chunks
     const chunks = [];
     for (let i = 0; i < segments.length; i += MAX_SEGMENTS_PER_CHUNK) {
       chunks.push(segments.slice(i, i + MAX_SEGMENTS_PER_CHUNK));
@@ -1211,181 +1302,21 @@ async function translateAllSegments(segments, targetLang, apiKey, onChunkTransla
     let allTranslatedSegments = [];
     for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
       const chunk = chunks[chunkIndex];
-      const translatedChunk = useGemini
-        ? await translateChunk(chunk, targetLang, url, chunkIndex + 1, chunks.length)
-        : await translateChunkFree(chunk, targetLang, chunkIndex + 1, chunks.length);
+      const translatedChunk = await translateChunkFree(chunk, targetLang, chunkIndex + 1, chunks.length);
       allTranslatedSegments.push(...translatedChunk);
 
       if (typeof onChunkTranslated === 'function') {
         try { onChunkTranslated(translatedChunk, chunkIndex + 1, chunks.length); } catch { /* ignore */ }
       }
 
-      // Small delay between chunks
       if (chunkIndex < chunks.length - 1) {
-        await sleep(useGemini ? 1000 : 500);
+        await sleep(500);
       }
     }
     return allTranslatedSegments;
   }
 }
 
-// Translate a single chunk of segments
-async function translateChunk(segments, targetLang, url, chunkNum = 1, totalChunks = 1) {
-  // Update status with chunk progress
-  if (totalChunks > 1) {
-    updateStatus(`Đang dịch phần ${chunkNum}/${totalChunks} (${segments.length} câu)...`, 30 + (chunkNum / totalChunks) * 60);
-  }
-
-  // Create JSON structure for this chunk - use global index for proper mapping
-  const segmentsJson = segments.map((segment, localIndex) => ({
-    id: segments[localIndex].originalIndex || localIndex, // Use original index if available
-    text: segment.text,
-    timestamp: segment.timestamp
-  }));
-
-  const prompt = `Translate the following JSON array of video segments to ${langNames[targetLang]}. 
-Return a JSON array with the exact same structure, keeping the "id" and "timestamp" fields unchanged, but translate only the "text" field.
-Important: Return ONLY the JSON array, no markdown formatting, no explanations.
-
-Input JSON:
-${JSON.stringify(segmentsJson)}
-
-Translated JSON:`;
-
-  const maxRetries = 3;
-  let retryCount = 0;
-
-  while (retryCount < maxRetries) {
-    try {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: currentAbortController?.signal,
-        body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: prompt
-            }]
-          }],
-          generationConfig: {
-            temperature: 0.1,
-            maxOutputTokens: 8000 // Increased for larger responses
-          }
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        console.error('Gemini API error:', errorData);
-
-        // Handle quota exceeded error
-        if (errorData.error?.message?.includes('Quota exceeded')) {
-          const retryAfterMatch = errorData.error.message.match(/Please retry in ([\d.]+)s/);
-          const retryAfter = retryAfterMatch ? parseFloat(retryAfterMatch[1]) * 1000 + 1000 : 15000;
-
-          if (retryCount < maxRetries - 1) {
-            console.log(`Quota exceeded. Waiting ${retryAfter}ms before retry (attempt ${retryCount + 1}/${maxRetries})`);
-            updateStatus(`Rate limited. Waiting ${Math.ceil(retryAfter / 1000)} seconds...`, null);
-            await sleep(retryAfter);
-            retryCount++;
-            continue;
-          }
-        }
-
-        throw new Error(`Translation failed: ${errorData.error?.message || 'Unknown error'}`);
-      }
-
-      const data = await response.json();
-
-      if (!data.candidates || !data.candidates[0] || !data.candidates[0].content) {
-        throw new Error('Invalid response format from Gemini API');
-      }
-
-      const responseText = data.candidates[0].content.parts[0].text.trim();
-
-      // Clean up the response - remove any markdown formatting and extra text
-      let jsonText = responseText;
-
-      // Remove markdown code blocks
-      if (jsonText.includes('```json')) {
-        jsonText = jsonText.split('```json')[1].split('```')[0].trim();
-      } else if (jsonText.includes('```')) {
-        jsonText = jsonText.split('```')[1].split('```')[0].trim();
-      }
-
-      // Find the JSON array boundaries more reliably
-      const firstBracket = jsonText.indexOf('[');
-      const lastBracket = jsonText.lastIndexOf(']');
-
-      if (firstBracket !== -1 && lastBracket !== -1 && lastBracket > firstBracket) {
-        jsonText = jsonText.substring(firstBracket, lastBracket + 1);
-      }
-
-      // Remove any remaining non-JSON text
-      jsonText = jsonText.replace(/^[^[]*/, '').replace(/[^\]]*$/, '');
-
-      try {
-        const translatedSegments = JSON.parse(jsonText);
-
-        // Validate that we got an array
-        if (!Array.isArray(translatedSegments)) {
-          throw new Error('Response is not an array');
-        }
-
-        // Merge with original segment data
-        return segments.map((originalSegment, index) => {
-          const lookupId = originalSegment.originalIndex ?? index;
-          const translated = translatedSegments.find(t => t.id === lookupId) || translatedSegments[index];
-          return {
-            ...originalSegment,
-            originalText: originalSegment.text,
-            translatedText: translated?.text || originalSegment.text // Fallback to original
-          };
-        });
-
-      } catch (parseError) {
-        console.error('Failed to parse translation JSON:', parseError);
-        console.error('Raw response:', responseText);
-        console.error('Cleaned JSON:', jsonText);
-
-        if (retryCount < maxRetries - 1) {
-          console.log(`JSON parse failed, retrying... (attempt ${retryCount + 1}/${maxRetries})`);
-          await sleep(2000);
-          retryCount++;
-          continue;
-        }
-
-        // Final fallback: return original texts
-        return segments.map(segment => ({
-          ...segment,
-          originalText: segment.text,
-          translatedText: segment.text
-        }));
-      }
-
-    } catch (error) {
-      if (retryCount === maxRetries - 1) {
-        console.error('Translation error after all retries:', error);
-        // Return segments with original text as fallback
-        return segments.map(segment => ({
-          ...segment,
-          originalText: segment.text,
-          translatedText: segment.text
-        }));
-      }
-
-      // For network errors, wait and retry
-      if (error.name === 'TypeError' || error.message.includes('fetch')) {
-        console.log(`Network error, retrying in 2 seconds (attempt ${retryCount + 1}/${maxRetries})`);
-        await sleep(2000);
-        retryCount++;
-        continue;
-      }
-
-      throw error;
-    }
-  }
-}
 
 
 
@@ -1455,6 +1386,89 @@ function pickVoiceForLang(langCode) {
   return partial || voices[0] || null;
 }
 
+// =============================================
+// Cloud TTS synthesis via background proxy
+// =============================================
+async function fetchCloudTtsAudio(text, segStart, segEnd) {
+  if (!cloudTtsApiKey || !cloudTtsVoiceName) {
+    return null;
+  }
+
+  let speakingRate = 1.0;
+  if (segStart != null && segEnd != null && segEnd > segStart) {
+    const segDuration = segEnd - segStart;
+    const estimatedDuration = (text || '').length * TTS_MS_PER_CHAR / 1000;
+    speakingRate = estimatedDuration / segDuration;
+    // Không đọc chậm hơn tốc độ bình thường (1.0), chỉ tăng tốc nếu cần
+    speakingRate = Math.max(1.0, Math.min(2.0, speakingRate));
+  }
+
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: 'cloudTtsSynthesize',
+      apiKey: cloudTtsApiKey,
+      text: text,
+      voiceName: cloudTtsVoiceName,
+      languageCode: cloudTtsLangCode,
+      speakingRate: speakingRate
+    });
+
+    if (!response || !response.success || !response.audioContent) {
+      log('[CloudTTS] Synthesis failed:', response?.error);
+      return null;
+    }
+
+    const audioData = atob(response.audioContent);
+    const audioArray = new Uint8Array(audioData.length);
+    for (let i = 0; i < audioData.length; i++) {
+      audioArray[i] = audioData.charCodeAt(i);
+    }
+
+    if (!cloudTtsAudioContext || cloudTtsAudioContext.state === 'closed') {
+      cloudTtsAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (cloudTtsAudioContext.state === 'suspended') {
+      await cloudTtsAudioContext.resume();
+    }
+
+    const audioBuffer = await cloudTtsAudioContext.decodeAudioData(audioArray.buffer.slice(0));
+    return audioBuffer;
+  } catch (error) {
+    log('[CloudTTS] Error fetching audio:', error);
+    return null;
+  }
+}
+
+function playCloudTtsAudio(audioBuffer) {
+  if (!audioBuffer || !cloudTtsAudioContext) return Promise.resolve(false);
+
+  try {
+    const source = cloudTtsAudioContext.createBufferSource();
+    source.buffer = audioBuffer;
+
+    const gainNode = cloudTtsAudioContext.createGain();
+    gainNode.gain.value = TTS_VOLUME;
+    source.connect(gainNode);
+    gainNode.connect(cloudTtsAudioContext.destination);
+
+    return new Promise((resolve) => {
+      source.onended = () => {
+        resolve(true);
+      };
+      source.start(0);
+
+      const maxDuration = audioBuffer.duration * 1000 + 1500;
+      setTimeout(() => {
+        try { source.stop(); } catch { }
+        resolve(true);
+      }, maxDuration);
+    });
+  } catch (error) {
+    log('[CloudTTS] Error playing audio:', error);
+    return Promise.resolve(false);
+  }
+}
+
 function normalizeTtsText(text) {
   return (text || '').replace(/\s+/g, ' ').trim();
 }
@@ -1464,26 +1478,15 @@ function computeTtsRate(text, segStart, segEnd) {
     return TTS_RATE_DEFAULT;
   }
 
-  // Thời lượng chuẩn của segment
   const segDuration = segEnd - segStart;
-
-  // Lấy thời gian video hiện tại để xem ta có bị trễ không
-  const video = document.querySelector('video');
-  const videoTime = video ? video.currentTime : segStart;
-
-  // Thời gian thực tế còn lại để đọc hết câu này
-  // Nếu videoTime đã vượt qua segStart, ta có ít thời gian hơn
-  // Dùng Math.max(0.5, ...) để tránh chia cho số quá nhỏ (gây rate vô cực)
-  const availableTime = Math.max(0.5, segEnd - Math.max(segStart, videoTime));
-
-  // Ước tính thời gian cần thiết để đọc câu này ở tốc độ 1.0
   const estimatedDuration = (text || '').length * TTS_MS_PER_CHAR / 1000;
 
-  // Tính tốc độ cần thiết: Thời gian cần / Thời gian có
-  // Ví dụ: Cần 3s, nhưng chỉ có 1.5s -> Rate = 2.0 (đọc nhanh gấp đôi)
-  let rate = estimatedDuration / availableTime;
+  // Tính tỷ lệ cần thiết
+  let rawRate = estimatedDuration / segDuration;
 
-  // Ép tốc độ vào khoảng giới hạn an toàn để giọng đọc không bị méo quá mức
+  let rate = rawRate;
+  if (rate < 1.0) rate = 1.0;
+
   return Math.max(TTS_RATE_MIN, Math.min(TTS_RATE_MAX, rate));
 }
 
@@ -1513,13 +1516,64 @@ function shouldDropTtsText(normalizedText, now = Date.now()) {
 }
 
 function ttsSpeakNext() {
-  if (!isDubbingEnabled || !('speechSynthesis' in window)) return;
+  if (!isDubbingEnabled) return;
   startTtsWatchdog();
 
   const video = document.querySelector('video');
   if (video && (video.paused || video.seeking)) {
     return;
   }
+
+  // Cloud TTS path
+  if (ttsSource === 'cloud' && cloudTtsApiKey && cloudTtsVoiceName) {
+    if (isCloudTtsSpeaking || isLiveCaptionSpeaking) return;
+
+    const nextItem = liveCaptionQueue.shift();
+    if (!nextItem) return;
+    const nextText = nextItem.text;
+
+
+
+    isLiveCaptionSpeaking = true;
+    isCloudTtsSpeaking = true;
+    ttsCurrentSegEnd = nextItem.segEnd;
+    ttsLastStartAt = Date.now();
+
+    // If using ttsSpeakNext (DOM observer fallback), just fetch and play sequentially
+    // (scheduleTtsFromSegments uses prefetching instead)
+    const audioPromise = nextItem.audioBufferPromise || fetchCloudTtsAudio(nextText, nextItem.segStart, nextItem.segEnd);
+    audioPromise
+      .then((audioBuffer) => {
+        if (!audioBuffer) {
+          console.warn('[CloudTTS] Audio fetch failed. Skipping segment to prevent jarring voice change.');
+          // systemTtsSpeakItem(nextItem); // Vô hiệu hoá fallback để tránh lọt giọng mặc định
+          return;
+        }
+        return playCloudTtsAudio(audioBuffer);
+      })
+      .then((success) => {
+        if (success !== undefined) {
+          isCloudTtsSpeaking = false;
+          isLiveCaptionSpeaking = false;
+          ttsCurrentSegEnd = null;
+          liveCaptionLastSpokenText = nextText;
+          liveCaptionLastSpokenAt = Date.now();
+          ttsSpeakNext();
+        }
+      })
+      .catch(() => {
+        isCloudTtsSpeaking = false;
+        isLiveCaptionSpeaking = false;
+        ttsCurrentSegEnd = null;
+        liveCaptionLastSpokenText = nextText;
+        liveCaptionLastSpokenAt = Date.now();
+        ttsSpeakNext();
+      });
+    return;
+  }
+
+  // System TTS path (original behavior)
+  if (!('speechSynthesis' in window)) return;
 
   if (speechSynthesis.paused) {
     speechSynthesis.resume();
@@ -1529,13 +1583,15 @@ function ttsSpeakNext() {
 
   const nextItem = liveCaptionQueue.shift();
   if (!nextItem) return;
-  const nextText = nextItem.text;
 
-  // Skip stale segments whose time window has already passed
-  if (video && nextItem.segEnd != null && video.currentTime > nextItem.segEnd + 0.5) {
-    ttsSpeakNext();
-    return;
-  }
+
+
+  systemTtsSpeakItem(nextItem);
+}
+
+// System TTS: speak a single queue item using Web Speech API
+function systemTtsSpeakItem(nextItem) {
+  const nextText = nextItem.text;
 
   const voices = speechSynthesis.getVoices ? speechSynthesis.getVoices() : [];
   if (!voices || voices.length === 0) {
@@ -1572,6 +1628,7 @@ function ttsSpeakNext() {
       safetyTimer = null;
     }
     isLiveCaptionSpeaking = false;
+    isCloudTtsSpeaking = false;
     ttsCurrentSegEnd = null;
     liveCaptionLastSpokenText = nextText;
     liveCaptionLastSpokenAt = Date.now();
@@ -1617,7 +1674,8 @@ function ttsClearQueue() {
 }
 
 // Unified TTS push: dedup 2 chiều + queue drain tuần tự (không drop câu)
-function ttsPush(text, allowMerge = true, segStart = null, segEnd = null) {
+function ttsPush(text, allowMerge = true, segStart = null, segEnd = null, audioBufferPromise = null) {
+  if (!isDubbingEnabled) return;
   const now = Date.now();
   const normalized = normalizeTtsText(text);
   if (!normalized) return;
@@ -1662,7 +1720,7 @@ function ttsPush(text, allowMerge = true, segStart = null, segEnd = null) {
       ttsQueueLastText = merged;
     }
   } else {
-    liveCaptionQueue.push({ text: finalText, segStart, segEnd });
+    liveCaptionQueue.push({ text: finalText, segStart, segEnd, audioBufferPromise });
     ttsQueueLastText = finalText;
   }
 
@@ -1895,7 +1953,7 @@ async function startLiveCaptionMode() {
 }
 
 // Main translation process
-async function startTranslation(apiKey, targetLang) {
+async function startTranslation(targetLang) {
   if (isTranslating) {
     return { success: false, error: 'Đang dịch, vui lòng đợi...' };
   }
@@ -1923,6 +1981,12 @@ async function startTranslation(apiKey, targetLang) {
   const overlay = createOverlay();
   overlay.style.display = 'block';
 
+  // [FIX] Tự động bật phụ đề YouTube nếu chưa bật
+  const ccBtn = document.querySelector('.ytp-subtitles-button');
+  if (ccBtn && ccBtn.getAttribute('aria-pressed') === 'false') {
+    ccBtn.click();
+  }
+
   // Khóa nút Lồng tiếng khi đang lấy dữ liệu
   const toggleBtn = document.getElementById('toggleDubbing');
   if (toggleBtn) {
@@ -1936,28 +2000,42 @@ async function startTranslation(apiKey, targetLang) {
     updateStatus('Đang lấy phụ đề...', 10);
     stopLiveCaptionMode();
     let segments = [];
+    let isAlreadyTranslated = false;
+    let sourceUrl = '';
+
     try {
       if (interceptedTranscription.videoId === videoId && interceptedTranscription.segments?.length > 0) {
         segments = interceptedTranscription.segments;
+        sourceUrl = interceptedTranscription.url || '';
         timedtextLog('Using intercepted transcription', { videoId, segments: segments.length });
       }
 
       if (prefetchedTranscription.videoId === videoId) {
         if (prefetchedTranscription.segments) {
           segments = prefetchedTranscription.segments;
+          sourceUrl = prefetchedTranscription.url || '';
         } else if (prefetchedTranscription.promise) {
-          segments = await prefetchedTranscription.promise;
+          const res = await prefetchedTranscription.promise;
+          if (res) {
+            segments = res.segments || res;
+            sourceUrl = res.url || '';
+          }
         }
       }
       if (!segments || segments.length === 0) {
         const intercepted = await waitForInterceptedTranscript(videoId, 4000);
-        if (intercepted && intercepted.length > 0) {
-          segments = intercepted;
+        if (intercepted && intercepted.segments?.length > 0) {
+          segments = intercepted.segments;
+          sourceUrl = intercepted.url || '';
           timedtextLog('Using intercepted transcription (waited)', { videoId, segments: segments.length });
         }
       }
       if (!segments || segments.length === 0) {
-        segments = await fetchTranscription(videoId, targetLang);
+        const fetchResult = await fetchTranscription(videoId, targetLang);
+        if (fetchResult) {
+          segments = fetchResult.segments || fetchResult;
+          sourceUrl = fetchResult.url || '';
+        }
       }
     } catch (error) {
       if (error?.name === 'AutomatedQueriesBlocked') {
@@ -1977,7 +2055,13 @@ async function startTranslation(apiKey, targetLang) {
       throw new Error('Video này không có phụ đề để dịch, hãy bật Play + bật CC 1 lần rồi thử lại.');
     }
 
-    updateStatus(`Đang dịch ${segments.length} câu...`, 30);
+    // Check if the source already contains translated text (via YouTube's tlang or native translation)
+    if (sourceUrl && (sourceUrl.includes('tlang=') || sourceUrl.includes('lang=' + targetLang))) {
+      isAlreadyTranslated = true;
+      log('Bypassing translation: Source is already translated', sourceUrl);
+    }
+
+    updateStatus(isAlreadyTranslated ? `Đang xử lý ${segments.length} câu...` : `Đang dịch ${segments.length} câu...`, 30);
 
     const segmentsWithIndices = segments.map((segment, index) => ({
       ...segment,
@@ -1985,11 +2069,10 @@ async function startTranslation(apiKey, targetLang) {
     }));
 
     // Progressive mode: start syncing immediately with original captions.
-    // Each segment will gain translatedText as chunks finish.
     translatedSegments = segmentsWithIndices.map(seg => ({
       ...seg,
       originalText: seg.text,
-      translatedText: ''
+      translatedText: isAlreadyTranslated ? seg.text : ''
     }));
 
     // Mở khóa nút Lồng tiếng khi đã có dữ liệu
@@ -2006,26 +2089,29 @@ async function startTranslation(apiKey, targetLang) {
       scheduleTtsFromSegments(video);
     }
 
-    const translatedCountByIndex = new Set();
-    const onChunkTranslated = (translatedChunk) => {
-      for (const tr of (translatedChunk || [])) {
-        const idx = tr?.originalIndex;
-        if (idx === null || idx === undefined) continue;
-        const target = translatedSegments[idx];
-        if (!target) continue;
-        // Mutate in-place so any scheduled closures see updated translatedText
-        Object.assign(target, tr);
-        translatedCountByIndex.add(idx);
+    if (!isAlreadyTranslated) {
+      const translatedCountByIndex = new Set();
+      const onChunkTranslated = (translatedChunk) => {
+        for (const tr of (translatedChunk || [])) {
+          const idx = tr?.originalIndex;
+          if (idx === null || idx === undefined) continue;
+          const target = translatedSegments[idx];
+          if (!target) continue;
+          Object.assign(target, tr);
+          translatedCountByIndex.add(idx);
+        }
+      };
+
+      await translateAllSegments(segmentsWithIndices, targetLang, onChunkTranslated);
+
+      const doneCount = translatedCountByIndex.size;
+      if (doneCount > 0) {
+        updateStatus(`✓ Dịch xong! Sẵn sàng ${doneCount}/${translatedSegments.length} câu`, 100);
+      } else {
+        updateStatus(`✓ Dịch xong! Sẵn sàng ${translatedSegments.length} câu`, 100);
       }
-    };
-
-    await translateAllSegments(segmentsWithIndices, targetLang, apiKey, onChunkTranslated);
-
-    const doneCount = translatedCountByIndex.size;
-    if (doneCount > 0) {
-      updateStatus(`✓ Dịch xong! Sẵn sàng ${doneCount}/${translatedSegments.length} câu`, 100);
     } else {
-      updateStatus(`✓ Dịch xong! Sẵn sàng ${translatedSegments.length} câu`, 100);
+      updateStatus(`✓ Đã tải xong ${translatedSegments.length} câu!`, 100);
     }
 
     return { success: true };
@@ -2042,8 +2128,11 @@ async function startTranslation(apiKey, targetLang) {
   }
 }
 
+let ttsScheduleGeneration = 0;
+
 // [FIX] Hủy tất cả TTS schedule timers (dùng khi seek hoặc stop)
 function clearTtsScheduleTimers() {
+  ttsScheduleGeneration++;
   ttsScheduleTimers.forEach(t => clearTimeout(t));
   ttsScheduleTimers = [];
 }
@@ -2059,12 +2148,33 @@ function scheduleTtsFromSegments(video) {
   const adaptiveLead = getAdaptiveTtsLead();
 
   translatedSegments.forEach((seg) => {
+    // Prefetch logic (Cloud TTS only)
+    if (ttsSource === 'cloud' && cloudTtsApiKey && cloudTtsVoiceName) {
+      const prefetchLead = 4.0; // Tải trước 4 giây
+      const prefetchFireTime = Math.max(0, (seg.start || 0) - prefetchLead);
+      const prefetchDelayMs = (prefetchFireTime - now) * 1000;
+
+      if (prefetchDelayMs > -4000) { // Bỏ qua nếu đã quá trễ
+        const pt = setTimeout(() => {
+          if (!isDubbingEnabled || video.paused || video.seeking) return;
+          const translated = (seg.translatedText || '').trim();
+          if (translated && !seg.audioBufferPromise) {
+            seg.audioBufferPromise = fetchCloudTtsAudio(translated, seg.start, seg.end);
+          }
+        }, Math.max(0, prefetchDelayMs));
+        ttsScheduleTimers.push(pt);
+      }
+    }
+
+    // Playback logic
     // Fire adaptiveLead seconds before caption start to compensate for TTS startup latency
     const fireAtVideoTime = Math.max(0, (seg.start || 0) - adaptiveLead);
     const delayMs = (fireAtVideoTime - now) * 1000;
     if (delayMs < -500) return; // bỏ qua segment đã qua quá 0.5s
 
+    const currentGeneration = ttsScheduleGeneration;
     const t = setTimeout(() => {
+      if (ttsScheduleGeneration !== currentGeneration) return;
       if (!isDubbingEnabled) return;
       // Kiểm tra video không bị seek ra khỏi window này
       if (Math.abs(video.currentTime - fireAtVideoTime) > 3) return;
@@ -2073,6 +2183,7 @@ function scheduleTtsFromSegments(video) {
       // This prevents speaking the original language (often English) on slower machines.
       const deadline = (seg.end ?? (seg.start ?? 0) + 2) + 0.6;
       const trySpeak = () => {
+        if (ttsScheduleGeneration !== currentGeneration) return;
         if (!isDubbingEnabled) return;
         if (video.paused || video.seeking) return;
 
@@ -2081,12 +2192,29 @@ function scheduleTtsFromSegments(video) {
 
         const translated = (seg.translatedText || '').trim();
         if (translated) {
-          ttsPush(translated, false, seg.start, seg.end);
+          // Bypass sequential queue to prevent accumulated delay and skipped segments
+          if (ttsSource === 'cloud' && cloudTtsApiKey && cloudTtsVoiceName) {
+            const audioPromise = seg.audioBufferPromise || fetchCloudTtsAudio(translated, seg.start, seg.end);
+            audioPromise.then(audioBuffer => {
+              if (ttsScheduleGeneration !== currentGeneration) return;
+              if (audioBuffer && isDubbingEnabled && !video.paused && !video.seeking) {
+                playCloudTtsAudio(audioBuffer);
+              } else if (!audioBuffer) {
+                console.warn('[CloudTTS] Audio fetch failed at playback time. Skipping segment.');
+                // speechSynthesis.cancel();
+                // systemTtsSpeakItem({ text: translated, segStart: seg.start, segEnd: seg.end });
+              }
+            });
+          } else {
+            speechSynthesis.cancel();
+            systemTtsSpeakItem({ text: translated, segStart: seg.start, segEnd: seg.end });
+          }
           return;
         }
 
         // Not ready yet: retry shortly until we pass the segment window.
-        setTimeout(trySpeak, 350);
+        const pt = setTimeout(trySpeak, 350);
+        ttsScheduleTimers.push(pt);
       };
 
       trySpeak();
@@ -2249,16 +2377,27 @@ function toggleDubbing() {
 // Listen for messages from popup and background
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'startTranslation') {
-    startTranslation(request.apiKey, request.targetLang)
+    // Apply TTS settings from popup
+    if (request.ttsSource) ttsSource = request.ttsSource;
+    if (request.cloudTtsApiKey) cloudTtsApiKey = request.cloudTtsApiKey;
+    if (request.cloudTtsVoiceName) cloudTtsVoiceName = request.cloudTtsVoiceName;
+    if (request.cloudTtsLangCode) cloudTtsLangCode = request.cloudTtsLangCode;
+
+    log('[TTS Config]', { ttsSource, cloudTtsVoiceName, cloudTtsLangCode });
+
+    startTranslation(request.targetLang)
       .then(sendResponse)
       .catch(error => sendResponse({ success: false, error: error.message }));
     return true;
   }
 
   if (request.action === 'autoTranslate') {
-    chrome.storage.sync.get(['geminiApiKey', 'targetLang'], (data) => {
-      if (data.geminiApiKey && data.targetLang) {
-        startTranslation(data.geminiApiKey, data.targetLang);
+    chrome.storage.sync.get(['targetLang', 'ttsSource', 'cloudTtsApiKey', 'cloudTtsVoiceName'], (data) => {
+      if (data.ttsSource) ttsSource = data.ttsSource;
+      if (data.cloudTtsApiKey) cloudTtsApiKey = data.cloudTtsApiKey;
+      if (data.cloudTtsVoiceName) cloudTtsVoiceName = data.cloudTtsVoiceName;
+      if (data.targetLang) {
+        startTranslation(data.targetLang);
       }
     });
     return false;
@@ -2296,9 +2435,12 @@ document.addEventListener('yt-navigate-finish', () => {
 
   // Thử tự động dịch lại cho video mới nếu đã có API Key
   setTimeout(() => {
-    chrome.storage.sync.get(['geminiApiKey', 'targetLang'], (data) => {
-      if (data.geminiApiKey && data.targetLang) {
-        startTranslation(data.geminiApiKey, data.targetLang);
+    chrome.storage.sync.get(['targetLang', 'ttsSource', 'cloudTtsApiKey', 'cloudTtsVoiceName'], (data) => {
+      if (data.ttsSource) ttsSource = data.ttsSource;
+      if (data.cloudTtsApiKey) cloudTtsApiKey = data.cloudTtsApiKey;
+      if (data.cloudTtsVoiceName) cloudTtsVoiceName = data.cloudTtsVoiceName;
+      if (data.targetLang) {
+        startTranslation(data.targetLang);
       } else {
         updateStatus('Sẵn sàng dịch. Vui lòng bấm Dịch ở Popup.', null);
       }
