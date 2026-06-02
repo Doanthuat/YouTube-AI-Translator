@@ -1439,12 +1439,15 @@ async function fetchCloudTtsAudio(text, segStart, segEnd) {
   }
 }
 
+let activeCloudTtsSources = [];
+
 function playCloudTtsAudio(audioBuffer) {
   if (!audioBuffer || !cloudTtsAudioContext) return Promise.resolve(false);
 
   try {
     const source = cloudTtsAudioContext.createBufferSource();
     source.buffer = audioBuffer;
+    activeCloudTtsSources.push(source);
 
     const gainNode = cloudTtsAudioContext.createGain();
     gainNode.gain.value = TTS_VOLUME;
@@ -1453,6 +1456,7 @@ function playCloudTtsAudio(audioBuffer) {
 
     return new Promise((resolve) => {
       source.onended = () => {
+        activeCloudTtsSources = activeCloudTtsSources.filter(s => s !== source);
         resolve(true);
       };
       source.start(0);
@@ -1460,6 +1464,7 @@ function playCloudTtsAudio(audioBuffer) {
       const maxDuration = audioBuffer.duration * 1000 + 1500;
       setTimeout(() => {
         try { source.stop(); } catch { }
+        activeCloudTtsSources = activeCloudTtsSources.filter(s => s !== source);
         resolve(true);
       }, maxDuration);
     });
@@ -2130,11 +2135,17 @@ async function startTranslation(targetLang) {
 
 let ttsScheduleGeneration = 0;
 
-// [FIX] Hủy tất cả TTS schedule timers (dùng khi seek hoặc stop)
+// [FIX] Hủy tất cả TTS schedule timers và dừng các âm thanh đang phát (dùng khi seek hoặc stop)
 function clearTtsScheduleTimers() {
   ttsScheduleGeneration++;
   ttsScheduleTimers.forEach(t => clearTimeout(t));
   ttsScheduleTimers = [];
+  
+  // Dừng toàn bộ âm thanh Cloud TTS đang phát
+  activeCloudTtsSources.forEach(source => {
+    try { source.stop(); } catch { }
+  });
+  activeCloudTtsSources = [];
 }
 
 // [FIX] Pre-schedule TTS bằng setTimeout dựa trên timestamp JSON
@@ -2152,7 +2163,7 @@ function scheduleTtsFromSegments(video) {
     if (ttsSource === 'cloud' && cloudTtsApiKey && cloudTtsVoiceName) {
       const prefetchLead = 4.0; // Tải trước 4 giây
       const prefetchFireTime = Math.max(0, (seg.start || 0) - prefetchLead);
-      const prefetchDelayMs = (prefetchFireTime - now) * 1000;
+      const prefetchDelayMs = ((prefetchFireTime - now) * 1000) / (video.playbackRate || 1.0);
 
       if (prefetchDelayMs > -4000) { // Bỏ qua nếu đã quá trễ
         const pt = setTimeout(() => {
@@ -2169,7 +2180,7 @@ function scheduleTtsFromSegments(video) {
     // Playback logic
     // Fire adaptiveLead seconds before caption start to compensate for TTS startup latency
     const fireAtVideoTime = Math.max(0, (seg.start || 0) - adaptiveLead);
-    const delayMs = (fireAtVideoTime - now) * 1000;
+    const delayMs = ((fireAtVideoTime - now) * 1000) / (video.playbackRate || 1.0);
     if (delayMs < -500) return; // bỏ qua segment đã qua quá 0.5s
 
     const currentGeneration = ttsScheduleGeneration;
@@ -2246,6 +2257,8 @@ function syncSubtitles() {
   if (currentPlaybackHandlers.seeking) video.removeEventListener('seeking', currentPlaybackHandlers.seeking);
   if (currentPlaybackHandlers.seeked) video.removeEventListener('seeked', currentPlaybackHandlers.seeked);
   if (currentPlaybackHandlers.ratechange) video.removeEventListener('ratechange', currentPlaybackHandlers.ratechange);
+  if (currentPlaybackHandlers.waiting) video.removeEventListener('waiting', currentPlaybackHandlers.waiting);
+  if (currentPlaybackHandlers.playing) video.removeEventListener('playing', currentPlaybackHandlers.playing);
 
   let lastDisplayedIndex = -1;
   let lastDisplayedText = '';
@@ -2324,22 +2337,34 @@ function syncSubtitles() {
     clearTtsScheduleTimers();
   };
 
-  // Khi play/seek xong → schedule lại theo currentTime hiện tại
+  currentPlaybackHandlers.waiting = () => {
+    if (!isDubbingEnabled) return;
+    try {
+      speechSynthesis.cancel();
+    } catch { /* ignore */ }
+    isLiveCaptionSpeaking = false;
+    clearTtsScheduleTimers();
+  };
+
+  // Khi play/seek/playing xong → schedule lại theo currentTime hiện tại
   currentPlaybackHandlers.play = () => {
     if (isDubbingEnabled) scheduleTtsFromSegments(video);
   };
-
+  currentPlaybackHandlers.playing = () => {
+    if (isDubbingEnabled && !video.paused) scheduleTtsFromSegments(video);
+  };
   currentPlaybackHandlers.seeked = () => {
     if (isDubbingEnabled && !video.paused) scheduleTtsFromSegments(video);
   };
-
   currentPlaybackHandlers.ratechange = () => {
     if (isDubbingEnabled && !video.paused && !video.seeking) scheduleTtsFromSegments(video);
   };
 
   video.addEventListener('pause', currentPlaybackHandlers.pause);
   video.addEventListener('seeking', currentPlaybackHandlers.seeking);
+  video.addEventListener('waiting', currentPlaybackHandlers.waiting);
   video.addEventListener('play', currentPlaybackHandlers.play);
+  video.addEventListener('playing', currentPlaybackHandlers.playing);
   video.addEventListener('seeked', currentPlaybackHandlers.seeked);
   video.addEventListener('ratechange', currentPlaybackHandlers.ratechange);
 
