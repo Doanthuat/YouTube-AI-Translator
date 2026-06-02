@@ -114,7 +114,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 // Handle messages from content scripts
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'getSettings') {
-    chrome.storage.sync.get(['geminiApiKey', 'targetLang', 'autoTranslate'], (data) => {
+    chrome.storage.sync.get(['targetLang', 'autoTranslate', 'ttsSource', 'cloudTtsApiKey', 'cloudTtsVoiceName'], (data) => {
       sendResponse(data);
     });
     return true;
@@ -187,6 +187,55 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
   
+  if (request.action === 'fetchCloudTtsVoices') {
+    const { apiKey, languageCode } = request;
+    const url = `https://texttospeech.googleapis.com/v1/voices?languageCode=${encodeURIComponent(languageCode || '')}&key=${encodeURIComponent(apiKey)}`;
+    fetch(url)
+      .then(response => {
+        if (!response.ok) {
+          return response.json().then(err => {
+            throw new Error(err.error?.message || `HTTP ${response.status}`);
+          });
+        }
+        return response.json();
+      })
+      .then(data => sendResponse({ success: true, voices: data.voices || [] }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (request.action === 'cloudTtsSynthesize') {
+    const { apiKey, text, voiceName, languageCode, speakingRate, pitch } = request;
+    const url = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(apiKey)}`;
+    fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input: { text },
+        voice: {
+          languageCode: languageCode || 'vi-VN',
+          name: voiceName || ''
+        },
+        audioConfig: {
+          audioEncoding: 'MP3',
+          speakingRate: speakingRate || 1.0,
+          pitch: pitch || 0.0
+        }
+      })
+    })
+      .then(response => {
+        if (!response.ok) {
+          return response.json().then(err => {
+            throw new Error(err.error?.message || `HTTP ${response.status}`);
+          });
+        }
+        return response.json();
+      })
+      .then(data => sendResponse({ success: true, audioContent: data.audioContent }))
+      .catch(error => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
   if (request.action === 'notification') {
     // Show notification
     chrome.notifications.create({
