@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "YouTube AI Translator & Dubber",
-  "version": "1.0.0",
-  "description": "Translate and dub YouTube videos using Gemini AI",
+  "version": "2.0.0",
+  "description": "Translate and dub YouTube videos with AI",
   "permissions": [
     "activeTab",
     "storage",
@@ -13,8 +13,8 @@
     "https://www.youtube.com/*",
     "https://*.googlevideo.com/*",
     "https://video.google.com/*",
-    "https://generativelanguage.googleapis.com/*",
-    "https://translate.googleapis.com/*"
+    "https://translate.googleapis.com/*",
+    "https://texttospeech.googleapis.com/*"
   ],
   "background": {
     "service_worker": "background.js"
