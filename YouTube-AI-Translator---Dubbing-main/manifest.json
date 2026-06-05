@@ -1,12 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "YouTube AI Translator & Dubber",
+  "name": "YouTube AI Translator & Dubber (Lồng tiếng và Phụ đề)",
   "version": "2.0.0",
   "description": "Translate and dub YouTube videos with AI",
   "permissions": [
     "activeTab",
     "storage",
-    "scripting",
     "notifications"
   ],
   "host_permissions": [
@@ -21,13 +20,23 @@
   },
   "content_scripts": [
     {
-      "matches": ["https://www.youtube.com/*"],
-      "js": ["content.js"],
-      "css": ["styles.css"]
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "css": [
+        "styles.css"
+      ]
     },
     {
-      "matches": ["https://www.youtube.com/*"],
-      "js": ["inject.js"],
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "inject.js"
+      ],
       "world": "MAIN"
     }
   ],
