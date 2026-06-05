@@ -41,6 +41,7 @@ let liveCaptionLastText = '';
 let isLiveCaptionMode = false;
 let currentTargetLang = 'vi';
 let prefetchTargetLang = 'vi';
+let isBilingualEnabled = false;
 
 // Cloud TTS state
 let ttsSource = 'system'; // 'system' | 'cloud'
@@ -148,28 +149,70 @@ function createOverlay() {
   overlay.id = 'yt-translator-overlay';
   overlay.innerHTML = `
     <div class="yt-trans-header">
-      <span class="yt-trans-title"> Trình dịch AI (Lồng tiếng)</span>
-      <button class="yt-trans-close">×</button>
+      <div class="yt-trans-header-left">
+        <div class="yt-trans-logo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z" fill="url(#logoGrad)"/>
+            <defs><linearGradient id="logoGrad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#3b82f6"/></linearGradient></defs>
+          </svg>
+        </div>
+        <div>
+          <div class="yt-trans-title">AI Translator</div>
+          <div class="yt-trans-subtitle-label">Lồng tiếng &amp; Dịch thuật</div>
+        </div>
+      </div>
+      <button class="yt-trans-close" title="Đóng">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
     </div>
     <div class="yt-trans-content">
-      <div class="yt-trans-status">Sẵn sàng</div>
+      <div class="yt-trans-status-bar">
+        <div class="yt-trans-status-dot"></div>
+        <div class="yt-trans-status">Sẵn sàng</div>
+      </div>
       <div class="yt-trans-progress-bar">
         <div class="yt-trans-progress-fill"></div>
       </div>
-      <div class="yt-trans-controls">
-        <button class="yt-trans-btn" id="toggleDubbing"> Bật lồng tiếng</button>
+
+      <div class="yt-trans-section-title">Kiểm soát</div>
+      <div class="yt-trans-grid">
+        <button class="yt-trans-btn yt-trans-btn-primary" id="toggleDubbing">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+          Bật lồng tiếng
+        </button>
+        <button class="yt-trans-btn yt-trans-btn-secondary" id="toggleSubtitles">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM6 10h2v2H6zm0 4h8v2H6zm10 0h2v2h-2zm-6-4h8v2h-8z"/></svg>
+          Tắt phụ đề
+        </button>
+        <button class="yt-trans-btn yt-trans-btn-green" id="toggleBilingual">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>
+          Bật song ngữ
+        </button>
+        <button class="yt-trans-btn yt-trans-btn-blue" id="exportSubtitles" title="Tải xuống phụ đề .srt">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>
+          Tải SRT
+        </button>
       </div>
-      <div class="yt-trans-volume-controls" style="margin-top: 15px; display: flex; flex-direction: column; gap: 8px;">
-        <label style="display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: #fff;">
-          <span>Âm lượng gốc:</span>
-          <input type="range" id="ytTransOriginalVolume" min="0" max="1" step="0.05" value="1.0" style="width: 100px; accent-color: #ff0000;">
-        </label>
-        <label style="display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: #fff;">
-          <span>Âm lượng lồng tiếng:</span>
-          <input type="range" id="ytTransDubbingVolume" min="0" max="1" step="0.05" value="1.0" style="width: 100px; accent-color: #ff0000;">
-        </label>
+
+      <div class="yt-trans-section-title">Âm thanh</div>
+      <div class="yt-trans-volume-section">
+        <div class="yt-trans-volume-row">
+          <div class="yt-trans-volume-label">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z"/></svg>
+            Âm gốc
+          </div>
+          <input type="range" id="ytTransOriginalVolume" min="0" max="1" step="0.05" value="1.0" class="yt-trans-slider">
+          <span class="yt-trans-vol-val" id="ytTransOriginalVolumeVal">100%</span>
+        </div>
+        <div class="yt-trans-volume-row">
+          <div class="yt-trans-volume-label">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
+            Lồng tiếng
+          </div>
+          <input type="range" id="ytTransDubbingVolume" min="0" max="1" step="0.05" value="1.0" class="yt-trans-slider">
+          <span class="yt-trans-vol-val" id="ytTransDubbingVolumeVal">100%</span>
+        </div>
       </div>
-      <div class="yt-trans-subtitle"></div>
     </div>
   `;
 
@@ -181,6 +224,79 @@ function createOverlay() {
   });
 
   overlay.querySelector('#toggleDubbing').addEventListener('click', toggleDubbing);
+
+  const ICON_SUBTITLE = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12zM6 10h2v2H6zm0 4h8v2H6zm10 0h2v2h-2zm-6-4h8v2h-8z"/></svg>`;
+  const ICON_BILINGUAL = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>`;
+
+  const toggleBilingualBtn = overlay.querySelector('#toggleBilingual');
+  const toggleSubBtn       = overlay.querySelector('#toggleSubtitles');
+
+  // ── Helper: turn bilingual OFF without triggering the click event ──
+  function deactivateBilingual() {
+    if (!isBilingualEnabled) return;
+    isBilingualEnabled = false;
+    document.body.classList.remove('yt-trans-bilingual-active');
+    const subtitleEl = document.querySelector('.yt-trans-subtitle');
+    if (subtitleEl) subtitleEl.style.display = 'none';
+    if (toggleBilingualBtn) {
+      toggleBilingualBtn.innerHTML = `${ICON_BILINGUAL} Bật song ngữ`;
+      toggleBilingualBtn.classList.remove('active');
+    }
+  }
+
+  // ── Helper: turn native-subtitle hide OFF ──
+  function deactivateSubtitleHide() {
+    if (!subtitlesHidden) return;
+    subtitlesHidden = false;
+    document.body.classList.remove('yt-trans-hide-subtitles');
+    if (toggleSubBtn) {
+      toggleSubBtn.innerHTML = `${ICON_SUBTITLE} Tắt phụ đề`;
+      toggleSubBtn.classList.remove('active');
+    }
+  }
+
+  // ── Bilingual toggle ──
+  if (toggleBilingualBtn) {
+    toggleBilingualBtn.addEventListener('click', () => {
+      isBilingualEnabled = !isBilingualEnabled;
+      if (isBilingualEnabled) {
+        // Turn on bilingual → must hide native subtitles
+        toggleBilingualBtn.innerHTML = `${ICON_BILINGUAL} Tắt song ngữ`;
+        toggleBilingualBtn.classList.add('active');
+        document.body.classList.add('yt-trans-bilingual-active');
+
+        // Also ensure "Tắt phụ đề" toggle is OFF (native captions already hidden via bilingual class)
+        deactivateSubtitleHide();
+      } else {
+        deactivateBilingual();
+      }
+    });
+  }
+
+  // ── Subtitle (show/hide) toggle ──
+  let subtitlesHidden = false;
+  if (toggleSubBtn) {
+    toggleSubBtn.addEventListener('click', () => {
+      subtitlesHidden = !subtitlesHidden;
+      if (subtitlesHidden) {
+        // Hide native subtitles → also turn off bilingual if active
+        deactivateBilingual();
+        document.body.classList.add('yt-trans-hide-subtitles');
+        toggleSubBtn.innerHTML = `${ICON_SUBTITLE} Bật phụ đề`;
+        toggleSubBtn.classList.add('active');
+      } else {
+        // Restore native subtitles
+        document.body.classList.remove('yt-trans-hide-subtitles');
+        toggleSubBtn.innerHTML = `${ICON_SUBTITLE} Tắt phụ đề`;
+        toggleSubBtn.classList.remove('active');
+      }
+    });
+  }
+
+  const exportSubtitlesBtn = overlay.querySelector('#exportSubtitles');
+  if (exportSubtitlesBtn) {
+    exportSubtitlesBtn.addEventListener('click', exportSubtitlesToSRT);
+  }
 
   const originalVolInput = overlay.querySelector('#ytTransOriginalVolume');
   const dubbingVolInput = overlay.querySelector('#ytTransDubbingVolume');
@@ -195,16 +311,61 @@ function createOverlay() {
   originalVolInput.addEventListener('input', (e) => {
     VIDEO_VOLUME = parseFloat(e.target.value);
     const vid = document.querySelector('video');
-    if (vid) {
-      vid.volume = VIDEO_VOLUME;
-    }
+    if (vid) vid.volume = VIDEO_VOLUME;
+    const valEl = overlay.querySelector('#ytTransOriginalVolumeVal');
+    if (valEl) valEl.textContent = Math.round(VIDEO_VOLUME * 100) + '%';
   });
 
   dubbingVolInput.addEventListener('input', (e) => {
     TTS_VOLUME = parseFloat(e.target.value);
+    const valEl = overlay.querySelector('#ytTransDubbingVolumeVal');
+    if (valEl) valEl.textContent = Math.round(TTS_VOLUME * 100) + '%';
   });
 
   return overlay;
+}
+
+function formatTimeSRT(seconds) {
+  if (!seconds || isNaN(seconds)) seconds = 0;
+  const date = new Date(seconds * 1000);
+  const hh = String(Math.floor(seconds / 3600)).padStart(2, '0');
+  const mm = String(date.getUTCHours() * 60 + date.getUTCMinutes() - Math.floor(seconds / 3600) * 60 > 0 ? date.getUTCMinutes() : date.getUTCMinutes()).padStart(2, '0');
+  // the above is safe: just use date.getUTCMinutes()
+  const cleanMm = String(date.getUTCMinutes()).padStart(2, '0');
+  const ss = String(date.getUTCSeconds()).padStart(2, '0');
+  const ms = String(date.getUTCMilliseconds()).padStart(3, '0');
+  return `${hh}:${cleanMm}:${ss},${ms}`;
+}
+
+function exportSubtitlesToSRT() {
+  if (!translatedSegments || translatedSegments.length === 0) {
+    alert("Chưa có dữ liệu phụ đề để tải xuống!");
+    return;
+  }
+
+  let srtContent = "";
+  translatedSegments.forEach((seg, index) => {
+    const start = formatTimeSRT(seg.start || seg.segStart || 0);
+    const end = formatTimeSRT(seg.end || seg.segEnd || 0);
+    let text = "";
+    if (isBilingualEnabled && seg.originalText && seg.originalText !== seg.translatedText) {
+      text = `${seg.originalText}\n${seg.translatedText || seg.text}`;
+    } else {
+      text = seg.translatedText || seg.text;
+    }
+
+    srtContent += `${index + 1}\n${start} --> ${end}\n${text}\n\n`;
+  });
+
+  const blob = new Blob([srtContent], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `YouTube_Subtitles_${isBilingualEnabled ? "Bilingual" : "Translated"}.srt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // Parse seconds from various formats
@@ -1338,13 +1499,33 @@ function updateStatus(message, progress = null) {
 // Show subtitle with dynamic timing
 let subtitleTimeout = null;
 
-function showSubtitle(text) {
-  const overlay = document.getElementById('yt-translator-overlay');
-  if (!overlay) return;
+function showSubtitle(text, originalText = null) {
+  let subtitleEl = document.querySelector('.yt-trans-subtitle');
+  if (!subtitleEl) {
+    subtitleEl = document.createElement('div');
+    subtitleEl.className = 'yt-trans-subtitle';
 
-  const subtitleEl = overlay.querySelector('.yt-trans-subtitle');
-  subtitleEl.textContent = text;
-  subtitleEl.style.display = 'block';
+    // Inject directly into YouTube's subtitle container so it respects fullscreen/video bounds
+    const ytContainer = document.querySelector('.ytp-caption-window-container');
+    if (ytContainer) {
+      ytContainer.appendChild(subtitleEl);
+    } else {
+      document.body.appendChild(subtitleEl);
+    }
+  }
+
+  if (isBilingualEnabled) {
+    if (originalText && originalText !== text) {
+      subtitleEl.innerHTML = `<div style="font-size: 0.8em; opacity: 0.7; margin-bottom: 4px; padding-bottom: 4px; border-bottom: 1px dashed rgba(255,255,255,0.2); text-align: center !important;">${originalText}</div><div style="text-align: center !important;">${text}</div>`;
+    } else {
+      subtitleEl.textContent = text;
+      subtitleEl.style.textAlign = 'center';
+    }
+    subtitleEl.style.display = 'block';
+  } else {
+    subtitleEl.style.display = 'none';
+    return;
+  }
 
   // Clear any existing timeout
   if (subtitleTimeout) {
@@ -2140,7 +2321,7 @@ function clearTtsScheduleTimers() {
   ttsScheduleGeneration++;
   ttsScheduleTimers.forEach(t => clearTimeout(t));
   ttsScheduleTimers = [];
-  
+
   // Dừng toàn bộ âm thanh Cloud TTS đang phát
   activeCloudTtsSources.forEach(source => {
     try { source.stop(); } catch { }
@@ -2299,8 +2480,9 @@ function syncSubtitles() {
       if (displayIndex !== -1) {
         const seg = translatedSegments[displayIndex];
         const textToShow = (seg?.translatedText || seg?.text || '').trim();
+        const originalToShow = (seg?.originalText || '').trim();
         if (displayIndex !== lastDisplayedIndex || textToShow !== lastDisplayedText) {
-          showSubtitle(textToShow);
+          showSubtitle(textToShow, originalToShow);
           lastDisplayedIndex = displayIndex;
           lastDisplayedText = textToShow;
         }
