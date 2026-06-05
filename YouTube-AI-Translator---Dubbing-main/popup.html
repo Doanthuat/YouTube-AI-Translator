@@ -1,273 +1,540 @@
 <!DOCTYPE html>
-<html>
+<html lang="vi">
+
 <head>
   <meta charset="UTF-8">
-  <title>Trình dịch YouTube AI</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Translator – YouTube</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     :root {
-      --bg-grad: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #334155 100%);
-      --card: rgba(255, 255, 255, 0.08);
-      --card-border: rgba(255, 255, 255, 0.14);
-      --text: rgba(255, 255, 255, 0.96);
-      --muted: rgba(255, 255, 255, 0.8);
-      --field-bg: rgba(255, 255, 255, 0.96);
-      --shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
-      --shadow-soft: 0 10px 30px rgba(0, 0, 0, 0.22);
-      --green: #4CAF50;
-      --green-hover: #45a049;
+      --emerald: #10b981;
+      --emerald-d: #059669;
+      --blue: #3b82f6;
+      --red: #ef4444;
+      --amber: #f59e0b;
+      --bg: #080a14;
+      --surface: rgba(255, 255, 255, 0.04);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-hi: rgba(255, 255, 255, 0.14);
+      --text: #f1f5f9;
+      --muted: rgba(255, 255, 255, 0.45);
+      --radius: 14px;
+      --radius-sm: 10px;
     }
 
     * {
       margin: 0;
       padding: 0;
-      box-sizing: border-box; 
+      box-sizing: border-box;
     }
+
     body {
-      width: 350px;
-      padding: 18px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: var(--bg-grad);
+      width: 340px;
+      background: var(--bg);
       color: var(--text);
-      letter-spacing: 0.1px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 13px;
+      line-height: 1.5;
+      overflow-x: hidden;
     }
-    h1 {
-      font-size: 18px;
-      margin-bottom: 14px;
-      text-align: center;
+
+    /* ── Hero Header ── */
+    .hero {
+      background: linear-gradient(135deg, rgba(16, 185, 129, .18) 0%, rgba(59, 130, 246, .12) 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 18px 18px 14px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .hero-logo {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, rgba(16, 185, 129, .3), rgba(59, 130, 246, .3));
+      border: 1px solid rgba(16, 185, 129, .35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .hero-logo svg {
+      width: 22px;
+      height: 22px;
+    }
+
+    .hero-text h1 {
+      font-size: 16px;
       font-weight: 700;
+      background: linear-gradient(135deg, #10b981, #3b82f6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      letter-spacing: -0.4px;
+      margin: 0;
     }
-    .section {
-      background: var(--card);
+
+    .hero-text p {
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 400;
+      margin-top: 2px;
+    }
+
+    /* ── Scrollable body ── */
+    .popup-body {
       padding: 14px;
-      border-radius: 14px;
-      margin-bottom: 12px;
-      border: 1px solid var(--card-border);
-      box-shadow: var(--shadow-soft);
-      backdrop-filter: blur(12px);
-    }
-    .section h2 {
-      font-size: 14px;
-      margin-bottom: 10px;
-      opacity: 0.95;
-      font-weight: 700;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 520px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255, 255, 255, .1) transparent;
     }
 
-    input, select {
-      width: 100%;
-      padding: 11px 12px;
-      border: 1px solid rgba(0, 0, 0, 0.08);
-      border-radius: 10px;
-      margin-bottom: 10px;
-      font-size: 14px;
-      background: var(--field-bg);
-      color: rgba(0, 0, 0, 0.85);
-      outline: none;
-      transition: box-shadow 0.2s ease, transform 0.2s ease;
-    }
-    input::placeholder {
-      color: rgba(0, 0, 0, 0.45);
-    }
-    input:focus, select:focus {
-      box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35);
-      transform: translateY(-1px);
-    }
-    select {
-      appearance: none;
-      background-image:
-        linear-gradient(45deg, transparent 50%, rgba(0, 0, 0, 0.55) 50%),
-        linear-gradient(135deg, rgba(0, 0, 0, 0.55) 50%, transparent 50%),
-        linear-gradient(to right, rgba(0, 0, 0, 0.08), rgba(0, 0, 0, 0.08));
-      background-position:
-        calc(100% - 18px) calc(50% - 3px),
-        calc(100% - 13px) calc(50% - 3px),
-        calc(100% - 40px) 50%;
-      background-size: 6px 6px, 6px 6px, 1px 18px;
-      background-repeat: no-repeat;
-      padding-right: 48px;
+    /* ── Section Card ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      transition: border-color .2s;
     }
 
-    button {
-      width: 100%;
-      padding: 12px;
-      border: none;
-      border-radius: 10px;
-      font-size: 14px;
+    .card:hover {
+      border-color: var(--border-hi);
+    }
+
+    .card-title {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 11px;
       font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+
+    .card-title svg {
+      width: 13px;
+      height: 13px;
+      opacity: .6;
+      flex-shrink: 0;
+    }
+
+    /* ── Inputs ── */
+    select,
+    input[type="text"],
+    input[type="password"] {
+      width: 100%;
+      padding: 9px 12px;
+      background: rgba(255, 255, 255, .06);
+      border: 1px solid var(--border-hi);
+      border-radius: var(--radius-sm);
+      color: var(--text);
+      font-size: 13px;
+      font-family: inherit;
+      outline: none;
+      margin-bottom: 8px;
+      transition: border-color .2s, box-shadow .2s;
+      appearance: none;
+    }
+
+    select option {
+      background: #1e293b;
+      color: var(--text);
+    }
+
+    select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='rgba(255,255,255,0.4)'%3E%3Cpath d='M7 10l5 5 5-5z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      padding-right: 32px;
+    }
+
+    input:focus,
+    select:focus {
+      border-color: var(--emerald);
+      box-shadow: 0 0 0 3px rgba(16, 185, 129, .15);
+    }
+
+    input::placeholder {
+      color: rgba(255, 255, 255, .25);
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      width: 100%;
+      padding: 10px 14px;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
       cursor: pointer;
-      transition: transform 0.2s ease, filter 0.2s ease, box-shadow 0.2s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      transition: all .2s ease;
+      letter-spacing: -.1px;
+      margin-bottom: 8px;
     }
-    .primary-btn {
-      background: var(--green);
+
+    .btn:last-child {
+      margin-bottom: 0;
+    }
+
+    .btn svg {
+      width: 15px;
+      height: 15px;
+      flex-shrink: 0;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--emerald), var(--emerald-d));
       color: white;
-      box-shadow: 0 10px 22px rgba(0, 0, 0, 0.22);
+      box-shadow: 0 4px 16px rgba(16, 185, 129, .35);
     }
-    .primary-btn:hover {
-      background: var(--green-hover);
-      transform: translateY(-2px);
-      filter: brightness(1.02);
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(16, 185, 129, .45);
     }
-    .primary-btn:active {
-      transform: translateY(0px);
-      filter: brightness(0.98);
+
+    .btn-primary:active {
+      transform: translateY(0);
     }
-    .primary-btn:disabled {
-      background: #ccc;
+
+    .btn-primary:disabled {
+      background: rgba(255, 255, 255, .12);
+      color: var(--muted);
       cursor: not-allowed;
+      box-shadow: none;
       transform: none;
     }
-    .status {
-      margin-top: 12px;
-      padding: 10px 12px;
-      border-radius: 10px;
-      font-size: 13px;
-      text-align: center;
-      display: none;
-      border: 1px solid rgba(255, 255, 255, 0.16);
+
+    .btn-secondary {
+      background: rgba(59, 130, 246, .2);
+      color: #93c5fd;
+      border: 1px solid rgba(59, 130, 246, .3);
     }
-    .status.success {
-      background: rgba(76, 175, 80, 0.3);
-      display: block;
+
+    .btn-secondary:hover {
+      background: rgba(59, 130, 246, .3);
+      transform: translateY(-1px);
     }
-    .status.error {
-      background: rgba(244, 67, 54, 0.3);
-      display: block;
+
+    /* ── Note ── */
+    .note {
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--muted);
+      background: rgba(255, 255, 255, .03);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 10px;
     }
-    .status.info {
-      background: rgba(33, 150, 243, 0.3);
-      display: block;
-    }
+
+    /* ── Link ── */
     .link {
-      color: #fff;
-      text-decoration: underline;
-      cursor: pointer;
       font-size: 12px;
-      display: inline-block;
-      margin-top: 5px;
-      opacity: 0.95;
+      color: var(--emerald);
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      margin-bottom: 8px;
+      opacity: .85;
+      transition: opacity .15s;
     }
+
     .link:hover {
       opacity: 1;
     }
-    .note {
-      font-size: 12px;
-      line-height: 1.35;
-      opacity: 0.9;
-      margin: 6px 0 10px;
-    }
+
+    /* ── Sliders ── */
     .slider-row {
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }
+
+    .slider-row:last-child {
+      margin-bottom: 0;
+    }
+
     .slider-label {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      font-size: 13px;
+      font-size: 12px;
+      color: rgba(255, 255, 255, .6);
       margin-bottom: 6px;
-      color: var(--text);
     }
+
+    .slider-label-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .slider-label-left svg {
+      width: 13px;
+      height: 13px;
+      opacity: .5;
+    }
+
     .slider-value {
+      font-size: 11px;
+      font-weight: 600;
       font-variant-numeric: tabular-nums;
-      opacity: 0.9;
+      color: var(--emerald);
+      background: rgba(16, 185, 129, .12);
+      padding: 1px 7px;
+      border-radius: 99px;
+      border: 1px solid rgba(16, 185, 129, .2);
     }
+
     input[type="range"] {
       width: 100%;
-      height: 6px;
+      height: 4px;
       padding: 0;
       margin: 0;
       border: none;
       border-radius: 999px;
       appearance: none;
-      background: linear-gradient(90deg, #38bdf8 0%, #22c55e 100%);
+      background: rgba(255, 255, 255, .1);
       outline: none;
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.15);
+      cursor: pointer;
     }
+
     input[type="range"]::-webkit-slider-thumb {
       appearance: none;
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
       border-radius: 50%;
-      background: #fff;
-      border: 3px solid #22c55e;
+      background: linear-gradient(135deg, var(--emerald), var(--blue));
       cursor: pointer;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+      box-shadow: 0 0 8px rgba(16, 185, 129, .5);
+      transition: transform .15s;
     }
+
+    input[type="range"]::-webkit-slider-thumb:hover {
+      transform: scale(1.2);
+    }
+
     input[type="range"]::-moz-range-thumb {
-      width: 18px;
-      height: 18px;
+      width: 16px;
+      height: 16px;
       border-radius: 50%;
-      background: #fff;
-      border: 3px solid #22c55e;
+      background: linear-gradient(135deg, var(--emerald), var(--blue));
+      border: none;
       cursor: pointer;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
+      box-shadow: 0 0 8px rgba(16, 185, 129, .5);
+    }
+
+    /* ── Status toast ── */
+    .status {
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      font-weight: 500;
+      text-align: center;
+      padding: 9px 12px;
+      display: none;
+      border: 1px solid transparent;
+    }
+
+    .status.success {
+      display: block;
+      background: rgba(16, 185, 129, .15);
+      border-color: rgba(16, 185, 129, .3);
+      color: #6ee7b7;
+    }
+
+    .status.error {
+      display: block;
+      background: rgba(239, 68, 68, .15);
+      border-color: rgba(239, 68, 68, .3);
+      color: #fca5a5;
+    }
+
+    .status.info {
+      display: block;
+      background: rgba(59, 130, 246, .15);
+      border-color: rgba(59, 130, 246, .3);
+      color: #93c5fd;
+    }
+
+    /* ── Divider ── */
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 2px 0;
+    }
+
+    /* ── Voice info ── */
+    #cloudTtsVoiceInfo {
+      font-size: 11px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, .03);
+      border-radius: 7px;
+      padding: 6px 9px;
+      margin-bottom: 8px;
+      border: 1px solid var(--border);
     }
   </style>
 </head>
+
 <body>
-  <h1>Trình dịch YouTube AI</h1>
-
-  <div class="section">
-    <h2>Cài đặt dịch</h2>
-    <select id="targetLang">
-      <option value="ar">Arabic (العربية)</option>
-      <option value="zh">Chinese (中文)</option>
-      <option value="en">English</option>
-      <option value="fr">French (Français)</option>
-      <option value="de">German (Deutsch)</option>
-      <option value="hi">Hindi (हिन्दी)</option>
-      <option value="it">Italian (Italiano)</option>
-      <option value="ja">Japanese (日本語)</option>
-      <option value="ko">Korean (한국어)</option>
-      <option value="pt">Portuguese (Português)</option>
-      <option value="ru">Russian (Русский)</option>
-      <option value="es">Spanish (Español)</option>
-      <option value="tr">Turkish (Türkçe)</option>
-      <option value="vi">Vietnamese (Tiếng Việt)</option>
-      <option value="th">Thai (ไทย)</option>
-    </select>
-    <button class="primary-btn" id="startTranslation">Dịch & Thuyết minh video</button>
+  <!-- Hero Header -->
+  <div class="hero">
+    <div class="hero-logo">
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"
+          fill="url(#hg)" />
+        <defs>
+          <linearGradient id="hg" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#10b981" />
+            <stop offset="100%" stop-color="#3b82f6" />
+          </linearGradient>
+        </defs>
+      </svg>
+    </div>
+    <div class="hero-text">
+      <h1>AI Translator</h1>
+      <p>Dịch thuật &amp; Lồng tiếng YouTube</p>
+    </div>
   </div>
 
-  <div class="section">
-    <h2>🎙️ Giọng đọc (TTS)</h2>
-    <div class="note">
-      Mặc định: dùng giọng hệ thống (miễn phí). Nhập Cloud TTS API key để dùng giọng Google chất lượng cao (WaveNet, Neural2, Studio...).
-    </div>
-    <select id="ttsSource">
-      <option value="system">🖥️ Giọng hệ thống (mặc định)</option>
-      <option value="cloud">☁️ Google Cloud TTS</option>
-    </select>
-    <div id="cloudTtsSettings" style="display: none;">
-      <input type="password" id="cloudTtsApiKey" placeholder="Cloud TTS API Key">
-      <button class="primary-btn" id="saveCloudTtsKey" style="margin-bottom: 10px;">Lưu / Xoá key TTS</button>
-      <a class="link" href="https://console.cloud.google.com/apis/credentials" target="_blank" style="margin-bottom: 10px; display: block;">Lấy Cloud TTS API key</a>
-      <select id="cloudTtsVoice" style="display: none;">
-        <option value="">-- Chọn giọng đọc --</option>
+  <div class="popup-body">
+
+    <!-- Translation Settings -->
+    <div class="card">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path
+            d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v1.99h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z" />
+        </svg>
+        Ngôn ngữ dịch
+      </div>
+      <select id="targetLang">
+        <option value="ar">🇸🇦 Arabic (العربية)</option>
+        <option value="zh">🇨🇳 Chinese (中文)</option>
+        <option value="en">🇺🇸 English</option>
+        <option value="fr">🇫🇷 French (Français)</option>
+        <option value="de">🇩🇪 German (Deutsch)</option>
+        <option value="hi">🇮🇳 Hindi (हिन्दी)</option>
+        <option value="it">🇮🇹 Italian (Italiano)</option>
+        <option value="ja">🇯🇵 Japanese (日本語)</option>
+        <option value="ko">🇰🇷 Korean (한국어)</option>
+        <option value="pt">🇧🇷 Portuguese (Português)</option>
+        <option value="ru">🇷🇺 Russian (Русский)</option>
+        <option value="es">🇪🇸 Spanish (Español)</option>
+        <option value="tr">🇹🇷 Turkish (Türkçe)</option>
+        <option value="vi">🇻🇳 Vietnamese (Tiếng Việt)</option>
+        <option value="th">🇹🇭 Thai (ไทย)</option>
       </select>
-      <div id="cloudTtsVoiceInfo" style="font-size: 11px; opacity: 0.8; margin-bottom: 8px; display: none;"></div>
-      <button class="primary-btn" id="previewVoice" style="background: #2196F3; display: none;">🔊 Thử giọng</button>
+      <button class="btn btn-primary" id="startTranslation">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path d="M8 5v14l11-7z" />
+        </svg>
+        Dịch &amp; Thuyết minh video
+      </button>
     </div>
-  </div>
 
-  <div class="section">
-    <h2>🔊 Âm thanh</h2>
-    <div class="slider-row">
-      <div class="slider-label">
-        <span>Âm lượng gốc</span>
-        <span class="slider-value" id="originalVolumeValue">100%</span>
+    <!-- TTS Settings -->
+    <div class="card">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path
+            d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+        </svg>
+        Giọng đọc (TTS)
       </div>
-      <input type="range" id="originalVolume" min="0" max="100" step="1" value="100">
-    </div>
-    <div class="slider-row" style="margin-bottom: 0;">
-      <div class="slider-label">
-        <span>Âm lượng lồng tiếng</span>
-        <span class="slider-value" id="dubbingVolumeValue">100%</span>
+      <div class="note">
+        Mặc định: giọng hệ thống (miễn phí). Nhập Cloud TTS API key để dùng giọng Google chất lượng cao (WaveNet,
+        Neural2, Studio...).
       </div>
-      <input type="range" id="dubbingVolume" min="0" max="100" step="1" value="100">
+      <select id="ttsSource">
+        <option value="system">🔊 Giọng hệ thống (mặc định)</option>
+        <option value="cloud">☁️ Google Cloud TTS</option>
+      </select>
+      <div id="cloudTtsSettings" style="display: none;">
+        <input type="password" id="cloudTtsApiKey" placeholder="Nhập Cloud TTS API Key...">
+        <button class="btn btn-primary" id="saveCloudTtsKey">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path
+              d="M17 3H5a2 2 0 00-2 2v14a2 2 0 002 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z" />
+          </svg>
+          Lưu / Xoá API Key
+        </button>
+        <a class="link" href="https://console.cloud.google.com/apis/credentials" target="_blank">
+          <svg viewBox="0 0 24 24" fill="currentColor" width="12" height="12">
+            <path
+              d="M19 19H5V5h7V3H5a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" />
+          </svg>
+          Lấy Cloud TTS API Key
+        </a>
+        <select id="cloudTtsVoice" style="display: none;">
+          <option value="">-- Chọn giọng đọc --</option>
+        </select>
+        <div id="cloudTtsVoiceInfo" style="display: none;"></div>
+        <button class="btn btn-secondary" id="previewVoice" style="display: none;">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path d="M8 5v14l11-7z" />
+          </svg>
+          Thử giọng
+        </button>
+      </div>
     </div>
-  </div>
 
-  <div class="status" id="status"></div>
+    <!-- Volume Controls -->
+    <div class="card">
+      <div class="card-title">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <path d="M5 9v6h4l5 5V4L9 9H5zm11.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
+        </svg>
+        Âm thanh
+      </div>
+      <div class="slider-row">
+        <div class="slider-label">
+          <div class="slider-label-left">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02z" />
+            </svg>
+            Âm gốc
+          </div>
+          <span class="slider-value" id="originalVolumeValue">100%</span>
+        </div>
+        <input type="range" id="originalVolume" min="0" max="100" step="1" value="100">
+      </div>
+      <div class="slider-row">
+        <div class="slider-label">
+          <div class="slider-label-left">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z" />
+            </svg>
+            Lồng tiếng
+          </div>
+          <span class="slider-value" id="dubbingVolumeValue">100%</span>
+        </div>
+        <input type="range" id="dubbingVolume" min="0" max="100" step="1" value="100">
+      </div>
+    </div>
+
+    <!-- Status -->
+    <div class="status" id="status"></div>
+
+  </div>
 
   <script src="popup.js"></script>
 </body>
+
 </html>
