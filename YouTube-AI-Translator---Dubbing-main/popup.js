@@ -12,20 +12,20 @@ const LANG_TO_BCP47 = {
 // Voice type labels for display
 function getVoiceTypeLabel(name) {
   if (!name) return '';
-  if (name.includes('Studio')) return '⭐ Studio';
-  if (name.includes('Neural2')) return '🧠 Neural2';
-  if (name.includes('Wavenet') || name.includes('WaveNet')) return '🌊 WaveNet';
-  if (name.includes('Polyglot')) return '🌐 Polyglot';
-  if (name.includes('News')) return '📰 News';
-  if (name.includes('Chirp')) return '🐦 Chirp';
-  if (name.includes('Journey')) return '🚀 Journey';
-  return '📢 Standard';
+  if (name.includes('Studio')) return 'Studio';
+  if (name.includes('Neural2')) return 'Neural2';
+  if (name.includes('Wavenet') || name.includes('WaveNet')) return 'WaveNet';
+  if (name.includes('Polyglot')) return 'Polyglot';
+  if (name.includes('News')) return 'News';
+  if (name.includes('Chirp')) return 'Chirp';
+  if (name.includes('Journey')) return 'Journey';
+  return 'Standard';
 }
 
 function getGenderIcon(gender) {
-  if (gender === 'MALE') return '♂️';
-  if (gender === 'FEMALE') return '♀️';
-  return '⚪';
+  if (gender === 'MALE') return '';
+  if (gender === 'FEMALE') return '';
+  return '';
 }
 
 // =============================================
@@ -54,7 +54,7 @@ chrome.storage.sync.get([
   }
 });
 
-// =============================================
+// =============================================x`
 // TTS Source toggle
 // =============================================
 function toggleCloudTtsSettings(show) {
@@ -172,7 +172,7 @@ async function fetchAndPopulateVoices(apiKey, lang, selectedVoiceName) {
     }
 
   } catch (error) {
-    voiceSelect.innerHTML = `<option value="">❌ Lỗi: ${error.message}</option>`;
+    voiceSelect.innerHTML = `<option value=""> Lỗi: ${error.message}</option>`;
     console.error('Failed to fetch Cloud TTS voices:', error);
   }
 }
@@ -272,11 +272,11 @@ document.getElementById('previewVoice').addEventListener('click', async () => {
     audio.onended = () => URL.revokeObjectURL(audioUrl);
     audio.play();
 
-    showStatus('🔊 Đang phát thử giọng...', 'info');
+    showStatus('Đang phát thử giọng...', 'info');
   } catch (error) {
     showStatus(`Lỗi thử giọng: ${error.message}`, 'error');
   } finally {
-    previewBtn.textContent = '🔊 Thử giọng';
+    previewBtn.textContent = ' Thử giọng';
     previewBtn.disabled = false;
   }
 });
